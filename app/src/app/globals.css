@@ -1,0 +1,73 @@
+@import 'tailwindcss';
+
+:root {
+  --color-orange: #ff5c1a;
+  --color-orange-dark: #cc4400;
+  --color-orange-light: #ff8a5c;
+  --color-night: #0d0d0d;
+  --color-night-2: #161616;
+  --color-night-3: #1f1f1f;
+  --color-night-4: #2a2a2a;
+  --color-steel: #3a3a3a;
+  --color-muted: #888888;
+  --color-text: #f0ede8;
+  --color-text-2: #b8b4ae;
+  --color-white: #ffffff;
+  --color-green: #22c55e;
+  --color-red: #ef4444;
+  --color-yellow: #f59e0b;
+  --color-blue: #3b82f6;
+  --radius-card: 20px;
+  --radius-input: 12px;
+}
+
+@theme inline {
+  --color-orange: var(--color-orange);
+  --color-orange-dark: var(--color-orange-dark);
+  --color-orange-light: var(--color-orange-light);
+  --color-night: var(--color-night);
+  --color-night-2: var(--color-night-2);
+  --color-night-3: var(--color-night-3);
+  --color-night-4: var(--color-night-4);
+  --color-steel: var(--color-steel);
+  --color-muted: var(--color-muted);
+  --color-text: var(--color-text);
+  --color-text-2: var(--color-text-2);
+  --color-green: var(--color-green);
+  --color-red: var(--color-red);
+  --color-yellow: var(--color-yellow);
+  --color-blue: var(--color-blue);
+  --font-display: var(--font-syne);
+  --font-sans: var(--font-dm-sans);
+}
+
+body {
+  background: var(--color-night);
+  color: var(--color-text);
+  font-family: var(--font-dm-sans), sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-syne), sans-serif;
+}
+
+@keyframes map-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 92, 26, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 20px rgba(255, 92, 26, 0);
+  }
+}
+
+.map-pulse {
+  animation: map-pulse 2s infinite;
+}
+
+.mapboxgl-ctrl-logo {
+  opacity: 0.6;
+}

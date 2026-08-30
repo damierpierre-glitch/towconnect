@@ -1,0 +1,1154 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>TowConnect — Plateforme de remorquage / Towing Platform</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+:root {
+  --orange: #FF5C1A;
+  --orange-dark: #CC4400;
+  --orange-light: #FF8A5C;
+  --night: #0D0D0D;
+  --night2: #161616;
+  --night3: #1F1F1F;
+  --night4: #2A2A2A;
+  --steel: #3A3A3A;
+  --muted: #888;
+  --text: #F0EDE8;
+  --text2: #B8B4AE;
+  --white: #FFFFFF;
+  --green: #22C55E;
+  --red: #EF4444;
+  --yellow: #F59E0B;
+  --blue: #3B82F6;
+  --radius: 12px;
+  --radius-lg: 20px;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: var(--night);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+h1,h2,h3,h4 { font-family: 'Syne', sans-serif; }
+
+/* NAV */
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 28px;
+  background: var(--night2);
+  border-bottom: 1px solid var(--steel);
+  position: sticky; top:0; z-index:100;
+}
+.logo { display:flex; align-items:center; gap:10px; }
+.logo-icon {
+  width:36px; height:36px; background:var(--orange);
+  border-radius:8px; display:flex; align-items:center; justify-content:center;
+  font-size:18px;
+}
+.logo-text { font-family:'Syne',sans-serif; font-weight:800; font-size:18px; }
+.logo-text span { color: var(--orange); }
+.nav-tabs { display:flex; gap:4px; background:var(--night3); border-radius:10px; padding:4px; }
+.nav-tab {
+  padding:8px 16px; border-radius:7px; border:none; cursor:pointer;
+  font-family:'DM Sans',sans-serif; font-size:13px; font-weight:500;
+  background:transparent; color:var(--muted); transition:all .2s;
+}
+.nav-tab.active { background:var(--orange); color:white; }
+.nav-right { display:flex; align-items:center; gap:12px; }
+.lang-btn {
+  padding:6px 14px; border-radius:8px; border:1px solid var(--steel);
+  background:transparent; color:var(--text2); cursor:pointer; font-size:13px;
+  font-family:'DM Sans',sans-serif; transition:all .2s;
+}
+.lang-btn:hover { border-color:var(--orange); color:var(--orange); }
+
+/* PAGES */
+.page { display:none; padding:28px; max-width:1100px; margin:0 auto; }
+.page.active { display:block; }
+
+/* CARDS */
+.card {
+  background:var(--night2); border:1px solid var(--steel);
+  border-radius:var(--radius-lg); padding:24px; margin-bottom:20px;
+}
+.card-orange { border-color:var(--orange); }
+
+/* GRID */
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.grid3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; }
+.grid4 { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+@media(max-width:768px) {
+  .grid2,.grid3,.grid4 { grid-template-columns:1fr; }
+  .nav-tabs { display:none; }
+}
+
+/* BUTTONS */
+.btn {
+  padding:12px 24px; border-radius:10px; border:none; cursor:pointer;
+  font-family:'DM Sans',sans-serif; font-size:15px; font-weight:600;
+  transition:all .2s; display:inline-flex; align-items:center; gap:8px;
+}
+.btn-primary { background:var(--orange); color:white; }
+.btn-primary:hover { background:var(--orange-dark); transform:translateY(-1px); }
+.btn-secondary { background:var(--night3); color:var(--text2); border:1px solid var(--steel); }
+.btn-secondary:hover { border-color:var(--orange); color:var(--orange); }
+.btn-green { background:var(--green); color:white; }
+.btn-red { background:var(--red); color:white; }
+.btn-full { width:100%; justify-content:center; }
+.btn-lg { padding:16px 32px; font-size:17px; border-radius:12px; }
+
+/* BADGE */
+.badge {
+  display:inline-flex; align-items:center; gap:6px;
+  padding:4px 10px; border-radius:20px; font-size:12px; font-weight:600;
+}
+.badge-green { background:rgba(34,197,94,.15); color:var(--green); }
+.badge-yellow { background:rgba(245,158,11,.15); color:var(--yellow); }
+.badge-red { background:rgba(239,68,68,.15); color:var(--red); }
+.badge-blue { background:rgba(59,130,246,.15); color:var(--blue); }
+.badge-orange { background:rgba(255,92,26,.15); color:var(--orange); }
+.dot { width:7px; height:7px; border-radius:50%; background:currentColor; }
+
+/* INPUTS */
+.form-group { margin-bottom:16px; }
+.form-label { display:block; font-size:13px; color:var(--text2); margin-bottom:6px; font-weight:500; }
+.form-input, .form-select, .form-textarea {
+  width:100%; padding:12px 14px; background:var(--night3);
+  border:1px solid var(--steel); border-radius:var(--radius);
+  color:var(--text); font-family:'DM Sans',sans-serif; font-size:14px;
+  outline:none; transition:border-color .2s;
+}
+.form-input:focus, .form-select:focus { border-color:var(--orange); }
+.form-textarea { min-height:80px; resize:vertical; }
+.form-select { cursor:pointer; }
+option { background:var(--night3); }
+
+/* SECTION TITLES */
+.section-title {
+  font-family:'Syne',sans-serif; font-size:22px; font-weight:700; margin-bottom:6px;
+}
+.section-sub { color:var(--text2); font-size:14px; margin-bottom:24px; }
+
+/* STAT CARDS */
+.stat-card {
+  background:var(--night3); border:1px solid var(--steel);
+  border-radius:var(--radius); padding:20px;
+  display:flex; flex-direction:column; gap:8px;
+}
+.stat-label { font-size:12px; color:var(--muted); font-weight:500; text-transform:uppercase; letter-spacing:.5px; }
+.stat-value { font-family:'Syne',sans-serif; font-size:28px; font-weight:700; }
+.stat-change { font-size:12px; }
+.stat-up { color:var(--green); }
+.stat-down { color:var(--red); }
+
+/* MAP PLACEHOLDER */
+.map-placeholder {
+  background:var(--night3); border:1px solid var(--steel);
+  border-radius:var(--radius-lg); height:280px;
+  display:flex; align-items:center; justify-content:center;
+  flex-direction:column; gap:12px; position:relative; overflow:hidden;
+}
+.map-grid {
+  position:absolute; inset:0; opacity:.06;
+  background-image: linear-gradient(var(--orange) 1px, transparent 1px),
+    linear-gradient(90deg, var(--orange) 1px, transparent 1px);
+  background-size: 30px 30px;
+}
+.map-pulse {
+  width:60px; height:60px; border-radius:50%;
+  background:rgba(255,92,26,.2); display:flex; align-items:center; justify-content:center;
+  animation: pulse 2s infinite;
+}
+.map-pin { font-size:28px; }
+@keyframes pulse {
+  0%,100%{box-shadow:0 0 0 0 rgba(255,92,26,.4)}
+  50%{box-shadow:0 0 0 20px rgba(255,92,26,0)}
+}
+
+/* DRIVER CARDS */
+.driver-card {
+  background:var(--night3); border:1px solid var(--steel);
+  border-radius:var(--radius); padding:16px;
+  display:flex; align-items:center; justify-content:space-between;
+  transition:all .2s; cursor:pointer;
+}
+.driver-card:hover { border-color:var(--orange); }
+.driver-card.selected { border-color:var(--orange); background:rgba(255,92,26,.05); }
+.driver-info { display:flex; align-items:center; gap:12px; }
+.driver-avatar {
+  width:44px; height:44px; border-radius:50%;
+  background:var(--orange); display:flex; align-items:center;
+  justify-content:center; font-family:'Syne',sans-serif; font-weight:700; font-size:16px; color:white;
+}
+.driver-name { font-weight:600; font-size:14px; }
+.driver-meta { font-size:12px; color:var(--muted); margin-top:2px; }
+.driver-right { text-align:right; }
+.driver-eta { font-family:'Syne',sans-serif; font-weight:700; font-size:16px; color:var(--orange); }
+.driver-dist { font-size:12px; color:var(--muted); }
+
+/* STEPS */
+.steps { display:flex; gap:0; margin-bottom:28px; }
+.step { flex:1; display:flex; flex-direction:column; align-items:center; gap:6px; }
+.step-circle {
+  width:32px; height:32px; border-radius:50%;
+  background:var(--night3); border:2px solid var(--steel);
+  display:flex; align-items:center; justify-content:center;
+  font-size:13px; font-weight:600; color:var(--muted); transition:all .3s;
+}
+.step-circle.done { background:var(--orange); border-color:var(--orange); color:white; }
+.step-circle.active { border-color:var(--orange); color:var(--orange); }
+.step-label { font-size:11px; color:var(--muted); text-align:center; }
+.step-line {
+  flex:1; height:2px; background:var(--steel); margin-top:15px; align-self:flex-start;
+}
+.step-line.done { background:var(--orange); }
+
+/* NOTIFICATION */
+.notif {
+  background:var(--night3); border:1px solid var(--steel);
+  border-radius:var(--radius); padding:14px 16px;
+  display:flex; align-items:center; gap:12px; margin-bottom:10px;
+}
+.notif-icon { font-size:22px; width:36px; text-align:center; }
+.notif-body { flex:1; }
+.notif-title { font-size:14px; font-weight:600; }
+.notif-time { font-size:12px; color:var(--muted); margin-top:2px; }
+
+/* TABLE */
+.table-wrap { overflow-x:auto; }
+table { width:100%; border-collapse:collapse; font-size:14px; }
+thead th {
+  text-align:left; padding:10px 14px; color:var(--muted);
+  font-size:12px; font-weight:500; text-transform:uppercase;
+  border-bottom:1px solid var(--steel); letter-spacing:.5px;
+}
+tbody td { padding:12px 14px; border-bottom:1px solid rgba(58,58,58,.5); }
+tbody tr:last-child td { border-bottom:none; }
+tbody tr:hover td { background:rgba(255,255,255,.02); }
+
+/* PROGRESS BAR */
+.progress-bar { height:6px; background:var(--steel); border-radius:3px; overflow:hidden; }
+.progress-fill { height:100%; background:var(--orange); border-radius:3px; transition:width .5s; }
+
+/* TOGGLE */
+.toggle-row { display:flex; align-items:center; justify-content:space-between; padding:14px 0; border-bottom:1px solid var(--steel); }
+.toggle-row:last-child { border-bottom:none; }
+.toggle { position:relative; width:44px; height:24px; }
+.toggle input { opacity:0; width:0; height:0; }
+.toggle-slider {
+  position:absolute; inset:0; background:var(--steel); border-radius:12px;
+  cursor:pointer; transition:.2s;
+}
+.toggle-slider:before {
+  content:''; position:absolute; height:18px; width:18px;
+  left:3px; bottom:3px; background:white; border-radius:50%; transition:.2s;
+}
+input:checked + .toggle-slider { background:var(--orange); }
+input:checked + .toggle-slider:before { transform:translateX(20px); }
+
+/* HERO */
+.hero {
+  text-align:center; padding:60px 20px 40px;
+  background: radial-gradient(ellipse at 50% 0%, rgba(255,92,26,.12) 0%, transparent 70%);
+}
+.hero-emoji { font-size:56px; margin-bottom:16px; display:block; }
+.hero h1 { font-size:42px; font-weight:800; line-height:1.1; margin-bottom:14px; }
+.hero h1 span { color:var(--orange); }
+.hero p { font-size:17px; color:var(--text2); max-width:520px; margin:0 auto 32px; line-height:1.6; }
+.hero-badges { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-bottom:40px; }
+
+/* POPUP OVERLAY */
+.overlay {
+  display:none; position:fixed; inset:0;
+  background:rgba(0,0,0,.75); z-index:200;
+  align-items:center; justify-content:center; padding:20px;
+}
+.overlay.open { display:flex; }
+.modal {
+  background:var(--night2); border:1px solid var(--steel);
+  border-radius:var(--radius-lg); padding:28px; width:100%; max-width:480px;
+  animation: slideUp .25s ease;
+}
+@keyframes slideUp {
+  from{transform:translateY(20px);opacity:0} to{transform:translateY(0);opacity:1}
+}
+.modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }
+.modal-title { font-family:'Syne',sans-serif; font-size:20px; font-weight:700; }
+.modal-close { background:none; border:none; color:var(--muted); font-size:22px; cursor:pointer; padding:4px; }
+
+/* DIVIDER */
+.divider { height:1px; background:var(--steel); margin:20px 0; }
+
+/* TOAST */
+.toast {
+  position:fixed; bottom:24px; right:24px; z-index:300;
+  background:var(--night2); border:1px solid var(--orange);
+  border-radius:var(--radius); padding:14px 18px;
+  display:flex; align-items:center; gap:10px;
+  animation: slideIn .3s ease; box-shadow:0 8px 32px rgba(0,0,0,.4);
+}
+@keyframes slideIn {
+  from{transform:translateX(100px);opacity:0} to{transform:translateX(0);opacity:1}
+}
+.toast.hidden { display:none; }
+
+/* RIDE STATUS */
+.status-track { display:flex; flex-direction:column; gap:0; }
+.status-item { display:flex; gap:14px; }
+.status-line-col { display:flex; flex-direction:column; align-items:center; }
+.status-dot2 { width:14px; height:14px; border-radius:50%; background:var(--steel); flex-shrink:0; margin-top:3px; }
+.status-dot2.done { background:var(--orange); }
+.status-dot2.active { background:var(--orange); box-shadow:0 0 0 4px rgba(255,92,26,.25); }
+.status-vline { width:2px; background:var(--steel); flex:1; min-height:28px; margin:4px 0; }
+.status-vline.done { background:var(--orange); }
+.status-content { padding-bottom:20px; }
+.status-step-title { font-weight:600; font-size:14px; }
+.status-step-sub { font-size:12px; color:var(--muted); margin-top:3px; }
+
+/* PANE SWITCH */
+.pane { display:none; }
+.pane.active { display:block; }
+
+/* BOTTOM NAV (mobile-like) */
+.bottom-nav {
+  position:fixed; bottom:0; left:0; right:0;
+  background:var(--night2); border-top:1px solid var(--steel);
+  display:none; z-index:100;
+}
+@media(max-width:768px){
+  .bottom-nav { display:flex; }
+  .page { padding:16px 14px 80px; }
+}
+.bottom-nav-btn {
+  flex:1; display:flex; flex-direction:column; align-items:center;
+  gap:3px; padding:10px 4px; border:none; background:none;
+  cursor:pointer; color:var(--muted); font-size:10px; font-family:'DM Sans',sans-serif;
+}
+.bottom-nav-btn.active { color:var(--orange); }
+.bottom-nav-icon { font-size:20px; }
+
+/* UTILITY */
+.flex { display:flex; }
+.flex-col { flex-direction:column; }
+.items-center { align-items:center; }
+.justify-between { justify-content:space-between; }
+.gap-8 { gap:8px; }
+.gap-12 { gap:12px; }
+.gap-16 { gap:16px; }
+.mt-4 { margin-top:4px; }
+.mt-8 { margin-top:8px; }
+.mt-16 { margin-top:16px; }
+.mt-20 { margin-top:20px; }
+.mb-8 { margin-bottom:8px; }
+.mb-16 { margin-bottom:16px; }
+.text-sm { font-size:13px; }
+.text-muted { color:var(--muted); }
+.text-orange { color:var(--orange); }
+.text-green { color:var(--green); }
+.font-bold { font-weight:700; }
+.text-right { text-align:right; }
+.w-full { width:100%; }
+.hidden { display:none !important; }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav">
+  <div class="logo">
+    <div class="logo-icon">🚛</div>
+    <div class="logo-text">Tow<span>Connect</span></div>
+  </div>
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="switchPage('user')">
+      👤 <span id="tab-user">Usager</span>
+    </button>
+    <button class="nav-tab" onclick="switchPage('driver')">
+      🚛 <span id="tab-driver">Remorqueur</span>
+    </button>
+    <button class="nav-tab" onclick="switchPage('admin')">
+      📊 <span id="tab-admin">Admin</span>
+    </button>
+  </div>
+  <div class="nav-right">
+    <button class="lang-btn" onclick="toggleLang()" id="lang-btn">🌐 EN</button>
+  </div>
+</nav>
+
+<!-- TOAST -->
+<div class="toast hidden" id="toast">
+  <span id="toast-icon">✅</span>
+  <span id="toast-msg">Message</span>
+</div>
+
+<!-- ======================== PAGE USAGER ======================== -->
+<div class="page active" id="page-user">
+
+  <!-- HERO -->
+  <div class="hero" id="user-hero">
+    <span class="hero-emoji">🚨</span>
+    <h1 id="hero-title">Panne au bord<br/>de la <span>route?</span></h1>
+    <p id="hero-sub">TowConnect vous connecte instantanément au remorqueur le plus proche. Couverture <strong>Canada entier</strong> — 24/7.</p>
+    <div class="hero-badges">
+      <span class="badge badge-green"><span class="dot"></span><span id="badge-canada">🇨🇦 Tout le Canada</span></span>
+      <span class="badge badge-orange"><span class="dot"></span><span id="badge-fast">⚡ Réponse rapide</span></span>
+      <span class="badge badge-blue"><span class="dot"></span><span id="badge-safe">🔒 Sécurisé</span></span>
+    </div>
+    <button class="btn btn-primary btn-lg" onclick="showRequestForm()" id="btn-emergency">
+      🚨 <span id="btn-emergency-text">Demander de l'aide</span>
+    </button>
+  </div>
+
+  <!-- PANE: formulaire demande -->
+  <div id="pane-form" class="pane">
+    <div class="card">
+      <!-- Steps -->
+      <div class="steps">
+        <div class="step">
+          <div class="step-circle done" id="step1">1</div>
+          <span class="step-label" id="step-lbl1">Situation</span>
+        </div>
+        <div class="step-line done" id="line1"></div>
+        <div class="step">
+          <div class="step-circle active" id="step2">2</div>
+          <span class="step-label" id="step-lbl2">Remorqueur</span>
+        </div>
+        <div class="step-line" id="line2"></div>
+        <div class="step">
+          <div class="step-circle" id="step3">3</div>
+          <span class="step-label" id="step-lbl3">Confirmation</span>
+        </div>
+        <div class="step-line" id="line3"></div>
+        <div class="step">
+          <div class="step-circle" id="step4">✓</div>
+          <span class="step-label" id="step-lbl4">En route</span>
+        </div>
+      </div>
+
+      <!-- Étape 1 -->
+      <div id="form-step1">
+        <h3 class="section-title" id="form-title">Décrivez votre situation</h3>
+        <p class="section-sub" id="form-sub">Ces informations permettent d'envoyer le bon remorqueur.</p>
+        <div class="form-group">
+          <label class="form-label" id="lbl-type">Type de problème</label>
+          <select class="form-select" id="problem-type">
+            <option value="">-- Choisir --</option>
+            <option>🔋 Batterie à plat / Dead battery</option>
+            <option>⛽ Panne sèche / Out of gas</option>
+            <option>🔧 Panne mécanique / Breakdown</option>
+            <option>🚗 Accident / Accident</option>
+            <option>🔑 Clés enfermées / Keys locked in</option>
+            <option>🛞 Crevaison / Flat tire</option>
+            <option>❄️ Pris dans la neige / Stuck in snow</option>
+            <option>❓ Autre / Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" id="lbl-loc">Votre position</label>
+          <div class="flex gap-8">
+            <input class="form-input" placeholder="Ex: A-40 Est, sortie 122, Montréal" id="location-input" style="flex:1"/>
+            <button class="btn btn-secondary" onclick="detectLocation()" title="Détecter ma position">📍</button>
+          </div>
+        </div>
+        <div class="grid2">
+          <div class="form-group">
+            <label class="form-label" id="lbl-name">Votre nom</label>
+            <input class="form-input" placeholder="Jean Tremblay" id="user-name"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label" id="lbl-phone">Téléphone</label>
+            <input class="form-input" placeholder="514-555-1234" id="user-phone"/>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" id="lbl-vehicle">Véhicule</label>
+          <input class="form-input" placeholder="Ex: Honda Civic 2019 rouge" id="user-vehicle"/>
+        </div>
+        <div class="form-group">
+          <label class="form-label" id="lbl-notes">Notes additionnelles</label>
+          <textarea class="form-textarea" placeholder="Ex: Je suis sur l'accotement, feux de détresse allumés..." id="user-notes"></textarea>
+        </div>
+        <button class="btn btn-primary btn-full mt-16" onclick="findDrivers()" id="btn-find">
+          🔍 <span id="btn-find-text">Trouver un remorqueur</span>
+        </button>
+      </div>
+
+      <!-- Étape 2: Sélection remorqueur -->
+      <div id="form-step2" class="hidden">
+        <h3 class="section-title" id="title-drivers">Remorqueurs disponibles</h3>
+        <p class="section-sub" id="sub-drivers">3 remorqueurs disponibles près de vous</p>
+        <div class="map-placeholder mb-16">
+          <div class="map-grid"></div>
+          <div class="map-pulse"><span class="map-pin">📍</span></div>
+          <p class="text-sm text-muted mt-8" id="map-txt">Votre position · Remorqueurs en vert</p>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px;" id="drivers-list">
+          <div class="driver-card selected" onclick="selectDriver(this,'Marc B.')">
+            <div class="driver-info">
+              <div class="driver-avatar">MB</div>
+              <div>
+                <div class="driver-name">Marc Beaulieu</div>
+                <div class="driver-meta">⭐ 4.9 · 312 services · Flatbed</div>
+                <div class="mt-4"><span class="badge badge-green"><span class="dot"></span>Disponible</span></div>
+              </div>
+            </div>
+            <div class="driver-right">
+              <div class="driver-eta">8 min</div>
+              <div class="driver-dist">2.4 km</div>
+              <div class="text-sm text-muted mt-4">~$95</div>
+            </div>
+          </div>
+          <div class="driver-card" onclick="selectDriver(this,'Sylvie R.')">
+            <div class="driver-info">
+              <div class="driver-avatar" style="background:var(--blue)">SR</div>
+              <div>
+                <div class="driver-name">Sylvie Roberge</div>
+                <div class="driver-meta">⭐ 4.7 · 189 services · Standard</div>
+                <div class="mt-4"><span class="badge badge-green"><span class="dot"></span>Disponible</span></div>
+              </div>
+            </div>
+            <div class="driver-right">
+              <div class="driver-eta">14 min</div>
+              <div class="driver-dist">4.1 km</div>
+              <div class="text-sm text-muted mt-4">~$80</div>
+            </div>
+          </div>
+          <div class="driver-card" onclick="selectDriver(this,'Pierre L.')">
+            <div class="driver-info">
+              <div class="driver-avatar" style="background:var(--green)">PL</div>
+              <div>
+                <div class="driver-name">Pierre Lavallée</div>
+                <div class="driver-meta">⭐ 4.8 · 547 services · Heavy Duty</div>
+                <div class="mt-4"><span class="badge badge-yellow"><span class="dot"></span>En approche</span></div>
+              </div>
+            </div>
+            <div class="driver-right">
+              <div class="driver-eta">22 min</div>
+              <div class="driver-dist">6.8 km</div>
+              <div class="text-sm text-muted mt-4">~$110</div>
+            </div>
+          </div>
+        </div>
+        <div class="flex gap-8 mt-16">
+          <button class="btn btn-secondary" onclick="backToForm()" style="flex:1" id="btn-back">← <span>Retour</span></button>
+          <button class="btn btn-primary" onclick="confirmBooking()" style="flex:2" id="btn-confirm">
+            ✅ <span id="btn-confirm-text">Confirmer — Marc B.</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Étape 3: En route -->
+      <div id="form-step3" class="hidden">
+        <div style="text-align:center;padding:16px 0 28px;">
+          <div style="font-size:56px;margin-bottom:12px;">🚛</div>
+          <h3 class="section-title" id="title-onway">Votre remorqueur est en route!</h3>
+          <p class="section-sub" id="sub-onway">Marc Beaulieu arrive dans environ 8 minutes</p>
+          <div class="flex gap-8 justify-between" style="max-width:300px;margin:0 auto 24px;">
+            <div style="text-align:center">
+              <div style="font-size:24px;font-weight:700;color:var(--orange)">8</div>
+              <div class="text-sm text-muted">min</div>
+            </div>
+            <div style="text-align:center">
+              <div style="font-size:24px;font-weight:700;color:var(--orange)">2.4</div>
+              <div class="text-sm text-muted">km</div>
+            </div>
+            <div style="text-align:center">
+              <div style="font-size:24px;font-weight:700;color:var(--orange)">~$95</div>
+              <div class="text-sm text-muted">estimé</div>
+            </div>
+          </div>
+        </div>
+        <!-- Tracking -->
+        <div class="status-track mb-16">
+          <div class="status-item">
+            <div class="status-line-col">
+              <div class="status-dot2 done"></div>
+              <div class="status-vline done"></div>
+            </div>
+            <div class="status-content">
+              <div class="status-step-title" id="track1">✅ Demande reçue</div>
+              <div class="status-step-sub" id="track1-t">Il y a 30 sec</div>
+            </div>
+          </div>
+          <div class="status-item">
+            <div class="status-line-col">
+              <div class="status-dot2 done"></div>
+              <div class="status-vline done"></div>
+            </div>
+            <div class="status-content">
+              <div class="status-step-title" id="track2">✅ Remorqueur confirmé</div>
+              <div class="status-step-sub" id="track2-t">Marc Beaulieu · ⭐4.9</div>
+            </div>
+          </div>
+          <div class="status-item">
+            <div class="status-line-col">
+              <div class="status-dot2 active"></div>
+              <div class="status-vline"></div>
+            </div>
+            <div class="status-content">
+              <div class="status-step-title" id="track3">🚛 En route vers vous</div>
+              <div class="status-step-sub" id="track3-t">ETA: 8 minutes</div>
+            </div>
+          </div>
+          <div class="status-item">
+            <div class="status-line-col">
+              <div class="status-dot2"></div>
+              <div class="status-vline"></div>
+            </div>
+            <div class="status-content">
+              <div class="status-step-title" id="track4">⏳ Arrivée sur les lieux</div>
+              <div class="status-step-sub" id="track4-t">En attente...</div>
+            </div>
+          </div>
+          <div class="status-item">
+            <div class="status-line-col">
+              <div class="status-dot2"></div>
+            </div>
+            <div class="status-content">
+              <div class="status-step-title" id="track5">⏳ Service complété</div>
+              <div class="status-step-sub" id="track5-t">En attente...</div>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="padding:16px">
+          <div class="flex items-center gap-12">
+            <div class="driver-avatar">MB</div>
+            <div style="flex:1">
+              <div class="driver-name">Marc Beaulieu</div>
+              <div class="driver-meta">🚛 Flatbed · 🍁 Québec B5-2847</div>
+            </div>
+            <button class="btn btn-secondary" style="padding:10px 16px">📞 <span id="btn-call">Appeler</span></button>
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-full mt-16" onclick="resetUser()" id="btn-cancel">
+          ❌ <span id="btn-cancel-text">Annuler la demande</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FEATURES GRID -->
+  <div id="user-features">
+    <div class="grid3" style="margin-top:20px">
+      <div class="card" style="text-align:center;padding:28px 20px">
+        <div style="font-size:36px;margin-bottom:12px">⚡</div>
+        <h4 style="font-family:'Syne',sans-serif;margin-bottom:6px" id="feat1-title">Réponse rapide</h4>
+        <p class="text-sm text-muted" id="feat1-sub">Dispatch automatique vers le remorqueur le plus proche. Temps moyen: 12 min.</p>
+      </div>
+      <div class="card" style="text-align:center;padding:28px 20px">
+        <div style="font-size:36px;margin-bottom:12px">📍</div>
+        <h4 style="font-family:'Syne',sans-serif;margin-bottom:6px" id="feat2-title">Suivi en temps réel</h4>
+        <p class="text-sm text-muted" id="feat2-sub">Voyez votre remorqueur se déplacer sur la carte. Sachez exactement quand il arrive.</p>
+      </div>
+      <div class="card" style="text-align:center;padding:28px 20px">
+        <div style="font-size:36px;margin-bottom:12px">🍁</div>
+        <h4 style="font-family:'Syne',sans-serif;margin-bottom:6px" id="feat3-title">Canada entier</h4>
+        <p class="text-sm text-muted" id="feat3-sub">Du Yukon à la Nouvelle-Écosse. Réseau de remorqueurs dans toutes les provinces.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================== PAGE REMORQUEUR ======================== -->
+<div class="page" id="page-driver">
+  <div class="flex justify-between items-center mb-16">
+    <div>
+      <h2 class="section-title" id="driver-title">Tableau de bord remorqueur</h2>
+      <p class="text-muted text-sm" id="driver-sub">Marc Beaulieu · Flatbed · Québec</p>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <label class="toggle">
+        <input type="checkbox" id="driver-active" checked onchange="toggleDriverStatus()">
+        <span class="toggle-slider"></span>
+      </label>
+      <span id="driver-status-lbl" class="badge badge-green"><span class="dot"></span>En ligne</span>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="grid4 mb-16">
+    <div class="stat-card">
+      <span class="stat-label" id="stat-today">Aujourd'hui</span>
+      <span class="stat-value text-orange">4</span>
+      <span class="stat-change stat-up" id="stat-calls">↑ services</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label" id="stat-revenue">Revenus (mois)</span>
+      <span class="stat-value">$3 840</span>
+      <span class="stat-change stat-up">↑ 12% vs mois dernier</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label" id="stat-rating">Évaluation</span>
+      <span class="stat-value">4.9 ⭐</span>
+      <span class="stat-change text-muted">312 avis</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label" id="stat-total">Services total</span>
+      <span class="stat-value">312</span>
+      <span class="stat-change stat-up">↑ Depuis jan 2024</span>
+    </div>
+  </div>
+
+  <!-- NOUVELLE DEMANDE (popup simulation) -->
+  <div class="card card-orange mb-16" id="new-request-card">
+    <div class="flex justify-between items-center mb-16">
+      <h3 style="font-family:'Syne',sans-serif;font-size:16px" id="new-req-title">🔔 Nouvelle demande!</h3>
+      <span class="badge badge-orange">2.4 km</span>
+    </div>
+    <div class="grid2" style="gap:12px;margin-bottom:16px">
+      <div>
+        <div class="text-sm text-muted mb-4" id="req-lbl-type">Type</div>
+        <div class="font-bold">🔋 Batterie à plat</div>
+      </div>
+      <div>
+        <div class="text-sm text-muted mb-4" id="req-lbl-client">Client</div>
+        <div class="font-bold">Jean Tremblay</div>
+      </div>
+      <div>
+        <div class="text-sm text-muted mb-4" id="req-lbl-loc">Localisation</div>
+        <div class="font-bold">A-40 Est, sortie 122</div>
+      </div>
+      <div>
+        <div class="text-sm text-muted mb-4" id="req-lbl-vehicle">Véhicule</div>
+        <div class="font-bold">Honda Civic 2019</div>
+      </div>
+    </div>
+    <div class="flex gap-8">
+      <button class="btn btn-red" style="flex:1" onclick="declineRequest()" id="btn-decline">❌ <span>Refuser</span></button>
+      <button class="btn btn-green" style="flex:2" onclick="acceptRequest()" id="btn-accept">✅ <span>Accepter — $95</span></button>
+    </div>
+  </div>
+
+  <!-- Activité récente -->
+  <div class="card">
+    <h3 class="section-title" style="font-size:18px;margin-bottom:16px" id="recent-title">Activité récente</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th id="th-date">Date</th>
+            <th id="th-client">Client</th>
+            <th id="th-type">Type</th>
+            <th id="th-city">Ville</th>
+            <th id="th-amount">Montant</th>
+            <th id="th-status">Statut</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="text-muted">Auj. 09:14</td>
+            <td>Sophie Martin</td>
+            <td>🔧 Mécanique</td>
+            <td>Trois-Rivières, QC</td>
+            <td class="text-green font-bold">$120</td>
+            <td><span class="badge badge-green">Complété</span></td>
+          </tr>
+          <tr>
+            <td class="text-muted">Auj. 07:32</td>
+            <td>Paul Gagnon</td>
+            <td>❄️ Neige</td>
+            <td>Shawinigan, QC</td>
+            <td class="text-green font-bold">$85</td>
+            <td><span class="badge badge-green">Complété</span></td>
+          </tr>
+          <tr>
+            <td class="text-muted">Hier 22:17</td>
+            <td>Luc Dostie</td>
+            <td>🚗 Accident</td>
+            <td>Bécancour, QC</td>
+            <td class="text-green font-bold">$175</td>
+            <td><span class="badge badge-green">Complété</span></td>
+          </tr>
+          <tr>
+            <td class="text-muted">Hier 18:55</td>
+            <td>Marie Roy</td>
+            <td>🛞 Crevaison</td>
+            <td>Drummondville, QC</td>
+            <td class="text-green font-bold">$65</td>
+            <td><span class="badge badge-green">Complété</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ======================== PAGE ADMIN ======================== -->
+<div class="page" id="page-admin">
+  <div class="flex justify-between items-center mb-16">
+    <div>
+      <h2 class="section-title" id="admin-title">Administration TowConnect</h2>
+      <p class="text-muted text-sm" id="admin-sub">Vue d'ensemble · Canada · Temps réel</p>
+    </div>
+    <span class="badge badge-green"><span class="dot"></span><span id="admin-live">Données en direct</span></span>
+  </div>
+
+  <!-- Stats nationales -->
+  <div class="grid4 mb-20">
+    <div class="stat-card">
+      <span class="stat-label" id="adm-lbl1">Remorqueurs actifs</span>
+      <span class="stat-value text-green">847</span>
+      <span class="stat-change stat-up">↑ +23 cette semaine</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label" id="adm-lbl2">Demandes (aujourd'hui)</span>
+      <span class="stat-value text-orange">1 284</span>
+      <span class="stat-change stat-up">↑ +8% vs hier</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label" id="adm-lbl3">Temps moyen</span>
+      <span class="stat-value">11.4 min</span>
+      <span class="stat-change stat-up">↓ -2 min ce mois</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label" id="adm-lbl4">Revenus (mois)</span>
+      <span class="stat-value">$284K</span>
+      <span class="stat-change stat-up">↑ +18% vs jan</span>
+    </div>
+  </div>
+
+  <div class="grid2 gap-16">
+    <!-- Répartition provinciale -->
+    <div class="card">
+      <h3 class="section-title" style="font-size:17px;margin-bottom:16px" id="admin-prov-title">Couverture par province</h3>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div id="prov-list"></div>
+      </div>
+    </div>
+
+    <!-- Demandes en cours -->
+    <div class="card">
+      <h3 class="section-title" style="font-size:17px;margin-bottom:16px" id="admin-live-title">Demandes en cours (live)</h3>
+      <div style="display:flex;flex-direction:column;gap:8px" id="live-requests"></div>
+    </div>
+  </div>
+
+  <!-- Carte Canada -->
+  <div class="card mt-16">
+    <h3 class="section-title" style="font-size:17px;margin-bottom:12px" id="admin-map-title">Couverture nationale</h3>
+    <div class="map-placeholder" style="height:200px">
+      <div class="map-grid"></div>
+      <div style="text-align:center;z-index:1">
+        <div style="font-size:42px;margin-bottom:8px">🇨🇦</div>
+        <p class="text-sm text-muted" id="map-canada">847 remorqueurs actifs · 13 provinces & territoires</p>
+        <div style="display:flex;gap:8px;justify-content:center;margin-top:12px;flex-wrap:wrap">
+          <span class="badge badge-green">QC · 198</span>
+          <span class="badge badge-green">ON · 231</span>
+          <span class="badge badge-blue">BC · 142</span>
+          <span class="badge badge-blue">AB · 118</span>
+          <span class="badge badge-yellow">MB · 45</span>
+          <span class="badge badge-yellow">SK · 38</span>
+          <span class="badge badge-orange">Autres · 75</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Remorqueurs en attente d'approbation -->
+  <div class="card mt-16">
+    <h3 class="section-title" style="font-size:17px;margin-bottom:16px" id="admin-pending-title">Inscriptions en attente</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Nom</th>
+            <th>Province</th>
+            <th>Type camion</th>
+            <th>Date</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Robert Simard</td><td>🍁 QC</td><td>Flatbed</td><td>Aujourd'hui</td>
+            <td><div class="flex gap-8"><button class="btn btn-green" style="padding:6px 12px;font-size:12px" onclick="approveDriver('Robert Simard')">✓ Approuver</button><button class="btn btn-secondary" style="padding:6px 12px;font-size:12px">✕</button></div></td>
+          </tr>
+          <tr>
+            <td>Angela Beaumont</td><td>🍁 ON</td><td>Standard</td><td>Hier</td>
+            <td><div class="flex gap-8"><button class="btn btn-green" style="padding:6px 12px;font-size:12px" onclick="approveDriver('Angela Beaumont')">✓ Approuver</button><button class="btn btn-secondary" style="padding:6px 12px;font-size:12px">✕</button></div></td>
+          </tr>
+          <tr>
+            <td>Tyler Morrison</td><td>🍁 AB</td><td>Heavy Duty</td><td>Il y a 2j</td>
+            <td><div class="flex gap-8"><button class="btn btn-green" style="padding:6px 12px;font-size:12px" onclick="approveDriver('Tyler Morrison')">✓ Approuver</button><button class="btn btn-secondary" style="padding:6px 12px;font-size:12px">✕</button></div></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- BOTTOM NAV (mobile) -->
+<nav class="bottom-nav">
+  <button class="bottom-nav-btn active" onclick="switchPage('user')" id="bnav-user">
+    <span class="bottom-nav-icon">👤</span>
+    <span id="bnav-lbl-user">Usager</span>
+  </button>
+  <button class="bottom-nav-btn" onclick="switchPage('driver')" id="bnav-driver">
+    <span class="bottom-nav-icon">🚛</span>
+    <span id="bnav-lbl-driver">Remorqueur</span>
+  </button>
+  <button class="bottom-nav-btn" onclick="switchPage('admin')" id="bnav-admin">
+    <span class="bottom-nav-icon">📊</span>
+    <span id="bnav-lbl-admin">Admin</span>
+  </button>
+</nav>
+
+<script>
+// ============ LANGUAGE ============
+let lang = 'fr';
+const T = {
+  fr: {
+    'tab-user':'Usager','tab-driver':'Remorqueur','tab-admin':'Admin',
+    'hero-title':'Panne au bord<br/>de la <span>route?</span>',
+    'hero-sub':'TowConnect vous connecte instantanément au remorqueur le plus proche. Couverture <strong>Canada entier</strong> — 24/7.',
+    'btn-emergency-text':'Demander de l\'aide',
+    'badge-canada':'🇨🇦 Tout le Canada','badge-fast':'⚡ Réponse rapide','badge-safe':'🔒 Sécurisé',
+    'form-title':'Décrivez votre situation','form-sub':'Ces informations permettent d\'envoyer le bon remorqueur.',
+    'lbl-type':'Type de problème','lbl-loc':'Votre position','lbl-name':'Votre nom',
+    'lbl-phone':'Téléphone','lbl-vehicle':'Véhicule','lbl-notes':'Notes additionnelles',
+    'btn-find-text':'Trouver un remorqueur','step-lbl1':'Situation','step-lbl2':'Remorqueur',
+    'step-lbl3':'Confirmation','step-lbl4':'En route',
+    'title-drivers':'Remorqueurs disponibles','sub-drivers':'3 remorqueurs disponibles près de vous',
+    'map-txt':'Votre position · Remorqueurs en vert',
+    'btn-confirm-text':'Confirmer — Marc B.',
+    'title-onway':'Votre remorqueur est en route!','sub-onway':'Marc Beaulieu arrive dans environ 8 minutes',
+    'btn-call':'Appeler','btn-cancel-text':'Annuler la demande',
+    'track1':'✅ Demande reçue','track1-t':'Il y a 30 sec',
+    'track2':'✅ Remorqueur confirmé','track2-t':'Marc Beaulieu · ⭐4.9',
+    'track3':'🚛 En route vers vous','track3-t':'ETA: 8 minutes',
+    'track4':'⏳ Arrivée sur les lieux','track4-t':'En attente...',
+    'track5':'⏳ Service complété','track5-t':'En attente...',
+    'feat1-title':'Réponse rapide','feat1-sub':'Dispatch automatique vers le remorqueur le plus proche. Temps moyen: 12 min.',
+    'feat2-title':'Suivi en temps réel','feat2-sub':'Voyez votre remorqueur se déplacer sur la carte. Sachez exactement quand il arrive.',
+    'feat3-title':'Canada entier','feat3-sub':'Du Yukon à la Nouvelle-Écosse. Réseau de remorqueurs dans toutes les provinces.',
+    'driver-title':'Tableau de bord remorqueur','driver-sub':'Marc Beaulieu · Flatbed · Québec',
+    'stat-today':'Aujourd\'hui','stat-calls':'↑ services','stat-revenue':'Revenus (mois)',
+    'stat-rating':'Évaluation','stat-total':'Services total',
+    'new-req-title':'🔔 Nouvelle demande!','req-lbl-type':'Type','req-lbl-client':'Client',
+    'req-lbl-loc':'Localisation','req-lbl-vehicle':'Véhicule',
+    'recent-title':'Activité récente',
+    'th-date':'Date','th-client':'Client','th-type':'Type','th-city':'Ville',
+    'th-amount':'Montant','th-status':'Statut',
+    'admin-title':'Administration TowConnect','admin-sub':'Vue d\'ensemble · Canada · Temps réel',
+    'admin-live':'Données en direct','adm-lbl1':'Remorqueurs actifs','adm-lbl2':'Demandes (aujourd\'hui)',
+    'adm-lbl3':'Temps moyen','adm-lbl4':'Revenus (mois)',
+    'admin-prov-title':'Couverture par province','admin-live-title':'Demandes en cours (live)',
+    'admin-map-title':'Couverture nationale','map-canada':'847 remorqueurs actifs · 13 provinces & territoires',
+    'admin-pending-title':'Inscriptions en attente',
+    'bnav-lbl-user':'Usager','bnav-lbl-driver':'Remorqueur','bnav-lbl-admin':'Admin',
+    'toast-located':'Position détectée! A-40 Est, Montréal',
+    'toast-searching':'Recherche de remorqueurs...',
+    'toast-confirmed':'Marc Beaulieu confirmé! En route.',
+    'toast-declined':'Demande refusée.',
+    'toast-accepted':'Demande acceptée! Naviguez vers le client.',
+    'online':'En ligne','offline':'Hors ligne',
+  },
+  en: {
+    'tab-user':'User','tab-driver':'Driver','tab-admin':'Admin',
+    'hero-title':'Broken down on the <span>road?</span>',
+    'hero-sub':'TowConnect instantly connects you to the nearest tow truck. Coverage across <strong>all of Canada</strong> — 24/7.',
+    'btn-emergency-text':'Request Help',
+    'badge-canada':'🇨🇦 All of Canada','badge-fast':'⚡ Fast Response','badge-safe':'🔒 Secure',
+    'form-title':'Describe your situation','form-sub':'This helps us send the right tow truck to you.',
+    'lbl-type':'Problem type','lbl-loc':'Your location','lbl-name':'Your name',
+    'lbl-phone':'Phone','lbl-vehicle':'Vehicle','lbl-notes':'Additional notes',
+    'btn-find-text':'Find a tow truck','step-lbl1':'Situation','step-lbl2':'Driver',
+    'step-lbl3':'Confirm','step-lbl4':'En route',
+    'title-drivers':'Available tow trucks','sub-drivers':'3 tow trucks available near you',
+    'map-txt':'Your location · Tow trucks in green',
+    'btn-confirm-text':'Confirm — Marc B.',
+    'title-onway':'Your tow truck is on the way!','sub-onway':'Marc Beaulieu arrives in about 8 minutes',
+    'btn-call':'Call','btn-cancel-text':'Cancel request',
+    'track1':'✅ Request received','track1-t':'30 sec ago',
+    'track2':'✅ Driver confirmed','track2-t':'Marc Beaulieu · ⭐4.9',
+    'track3':'🚛 On the way to you','track3-t':'ETA: 8 minutes',
+    'track4':'⏳ Arrival on site','track4-t':'Waiting...',
+    'track5':'⏳ Service completed','track5-t':'Waiting...',
+    'feat1-title':'Fast response','feat1-sub':'Auto-dispatch to the nearest tow truck. Average response time: 12 min.',
+    'feat2-title':'Real-time tracking','feat2-sub':'Watch your tow truck move on the map. Know exactly when they arrive.',
+    'feat3-title':'All of Canada','feat3-sub':'From Yukon to Nova Scotia. Tow truck network in every province.',
+    'driver-title':'Driver Dashboard','driver-sub':'Marc Beaulieu · Flatbed · Quebec',
+    'stat-today':'Today','stat-calls':'↑ services','stat-revenue':'Revenue (month)',
+    'stat-rating':'Rating','stat-total':'Total services',
+    'new-req-title':'🔔 New request!','req-lbl-type':'Type','req-lbl-client':'Client',
+    'req-lbl-loc':'Location','req-lbl-vehicle':'Vehicle',
+    'recent-title':'Recent activity',
+    'th-date':'Date','th-client':'Client','th-type':'Type','th-city':'City',
+    'th-amount':'Amount','th-status':'Status',
+    'admin-title':'TowConnect Administration','admin-sub':'Overview · Canada · Real-time',
+    'admin-live':'Live data','adm-lbl1':'Active drivers','adm-lbl2':'Requests (today)',
+    'adm-lbl3':'Avg response','adm-lbl4':'Revenue (month)',
+    'admin-prov-title':'Coverage by province','admin-live-title':'Live requests',
+    'admin-map-title':'National coverage','map-canada':'847 active drivers · 13 provinces & territories',
+    'admin-pending-title':'Pending registrations',
+    'bnav-lbl-user':'User','bnav-lbl-driver':'Driver','bnav-lbl-admin':'Admin',
+    'toast-located':'Location detected! Hwy 40 East, Montreal',
+    'toast-searching':'Searching for tow trucks...',
+    'toast-confirmed':'Marc Beaulieu confirmed! On the way.',
+    'toast-declined':'Request declined.',
+    'toast-accepted':'Request accepted! Navigate to client.',
+    'online':'Online','offline':'Offline',
+  }
+};
+function t(k){ return T[lang][k] || k; }
+function applyLang(){
+  Object.keys(T[lang]).forEach(k=>{
+    const el = document.getElementById(k);
+    if(el){ el.innerHTML = T[lang][k]; }
+  });
+  document.getElementById('lang-btn').textContent = lang==='fr' ? '🌐 EN' : '🌐 FR';
+}
+function toggleLang(){ lang = lang==='fr'?'en':'fr'; applyLang(); }
+
+// ============ NAVIGATION ============
+function switchPage(p){
+  document.querySelectorAll('.page').forEach(el=>el.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(el=>el.classList.remove('active'));
+  document.querySelectorAll('.bottom-nav-btn').forEach(el=>el.classList.remove('active'));
+  document.getElementById('page-'+p).classList.add('active');
+  const tabs = {user:0,driver:1,admin:2};
+  document.querySelectorAll('.nav-tab')[tabs[p]].classList.add('active');
+  document.getElementById('bnav-'+p).classList.add('active');
+}
+
+// ============ USER FLOW ============
+let selectedDriver = 'Marc B.';
+function showRequestForm(){
+  document.getElementById('user-hero').style.display='none';
+  document.getElementById('user-features').style.display='none';
+  document.getElementById('pane-form').classList.add('active');
+  document.getElementById('form-step1').classList.remove('hidden');
+  document.getElementById('form-step2').classList.add('hidden');
+  document.getElementById('form-step3').classList.add('hidden');
+}
+function detectLocation(){
+  showToast('📍', t('toast-located'));
+  document.getElementById('location-input').value = lang==='fr'?'A-40 Est, sortie 122, Montréal':'Hwy 40 East, exit 122, Montreal';
+}
+function findDrivers(){
+  showToast('🔍', t('toast-searching'));
+  setTimeout(()=>{
+    document.getElementById('form-step1').classList.add('hidden');
+    document.getElementById('form-step2').classList.remove('hidden');
+    document.getElementById('step1').classList.add('done');
+    document.getElementById('line1').classList.add('done');
+    document.getElementById('step2').classList.add('done');
+    document.getElementById('step2').classList.add('active');
+  }, 800);
+}
+function selectDriver(card, name){
+  document.querySelectorAll('.driver-card').forEach(c=>c.classList.remove('selected'));
+  card.classList.add('selected');
+  selectedDriver = name;
+  document.getElementById('btn-confirm-text').textContent = (lang==='fr'?'Confirmer — ':'Confirm — ') + name;
+}
+function backToForm(){
+  document.getElementById('form-step2').classList.add('hidden');
+  document.getElementById('form-step1').classList.remove('hidden');
+}
+function confirmBooking(){
+  showToast('🚛', t('toast-confirmed'));
+  document.getElementById('form-step2').classList.add('hidden');
+  document.getElementById('form-step3').classList.remove('hidden');
+  document.getElementById('line2').classList.add('done');
+  document.getElementById('step3').classList.add('done');
+  document.getElementById('line3').classList.add('done');
+  document.getElementById('step4').classList.add('active');
+}
+function resetUser(){
+  document.getElementById('pane-form').classList.remove('active');
+  document.getElementById('user-hero').style.display='';
+  document.getElementById('user-features').style.display='';
+  document.getElementById('form-step1').classList.remove('hidden');
+  document.getElementById('form-step2').classList.add('hidden');
+  document.getElementById('form-step3').classList.add('hidden');
+  ['step1','step2','step3','step4'].forEach(s=>{ document.getElementById(s).className='step-circle'; });
+  ['line1','line2','line3'].forEach(l=>{ document.getElementById(l).className='step-line'; });
+}
+
+// ============ DRIVER FLOW ============
+function toggleDriverStatus(){
+  const on = document.getElementById('driver-active').checked;
+  const lbl = document.getElementById('driver-status-lbl');
+  if(on){ lbl.className='badge badge-green'; lbl.innerHTML='<span class="dot"></span>'+t('online'); }
+  else { lbl.className='badge badge-red'; lbl.innerHTML='<span class="dot"></span>'+t('offline'); }
+}
+function declineRequest(){
+  showToast('❌', t('toast-declined'));
+  document.getElementById('new-request-card').style.display='none';
+}
+function acceptRequest(){
+  showToast('✅', t('toast-accepted'));
+  document.getElementById('new-request-card').style.display='none';
+}
+
+// ============ ADMIN ============
+function approveDriver(name){
+  showToast('✅', name + (lang==='fr' ? ' approuvé!' : ' approved!'));
+}
+const provinces = [
+  {name:'Ontario',code:'ON',drivers:231,pct:27},
+  {name:'Québec',code:'QC',drivers:198,pct:23},
+  {name:'Colombie-Britannique / BC',code:'BC',drivers:142,pct:17},
+  {name:'Alberta',code:'AB',drivers:118,pct:14},
+  {name:'Manitoba',code:'MB',drivers:45,pct:5},
+  {name:'Saskatchewan',code:'SK',drivers:38,pct:4},
+  {name:'Autres provinces & territoires',code:'...',drivers:75,pct:9},
+];
+function renderProvinces(){
+  const el = document.getElementById('prov-list');
+  el.innerHTML = provinces.map(p=>`
+    <div style="margin-bottom:14px">
+      <div class="flex justify-between mb-4">
+        <span class="text-sm">${p.name}</span>
+        <span class="text-sm text-muted">${p.drivers} ${lang==='fr'?'remorqueurs':'drivers'}</span>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" style="width:${p.pct}%"></div></div>
+    </div>
+  `).join('');
+}
+const liveReqs = [
+  {client:'Jean T.',type:'🔋',city:'Montréal, QC',driver:'Marc B.',eta:'8 min'},
+  {client:'Julie P.',type:'🔧',city:'Toronto, ON',driver:'Kevin R.',eta:'11 min'},
+  {client:'Bob M.',type:'❄️',city:'Calgary, AB',driver:'Sara L.',eta:'15 min'},
+  {client:'Annie D.',type:'🛞',city:'Vancouver, BC',driver:'Tom W.',eta:'7 min'},
+];
+function renderLive(){
+  const el = document.getElementById('live-requests');
+  el.innerHTML = liveReqs.map(r=>`
+    <div class="notif">
+      <span class="notif-icon">${r.type}</span>
+      <div class="notif-body">
+        <div class="notif-title">${r.client} — ${r.city}</div>
+        <div class="notif-time">${lang==='fr'?'Remorqueur':'Driver'}: ${r.driver} · ETA: ${r.eta}</div>
+      </div>
+      <span class="badge badge-orange">${r.eta}</span>
+    </div>
+  `).join('');
+}
+
+// ============ TOAST ============
+let toastTimer;
+function showToast(icon, msg){
+  const t = document.getElementById('toast');
+  document.getElementById('toast-icon').textContent = icon;
+  document.getElementById('toast-msg').textContent = msg;
+  t.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>t.classList.add('hidden'), 3000);
+}
+
+// ============ INIT ============
+renderProvinces();
+renderLive();
+applyLang();
+</script>
+</body>
+</html>
