@@ -33,26 +33,12 @@ create policy "profiles: admins read all" on profiles
 create policy "profiles: update own" on profiles
   for update using (auth.uid() = id);
 
--- Lets users see the (public) name of any approved driver, e.g. in the
--- nearby-drivers list before a request is even created.
-create policy "profiles: public read of approved driver names" on profiles
-  for select using (
-    exists (
-      select 1 from driver_profiles dp
-      where dp.profile_id = profiles.id and dp.approval_status = 'approved'
-    )
-  );
-
--- Lets the two sides of a request see each other's full profile (e.g. phone
--- number) once they are matched, without opening profiles up globally.
-create policy "profiles: request participants read each other" on profiles
-  for select using (
-    exists (
-      select 1 from requests r
-      where (r.user_id = profiles.id or r.driver_id = profiles.id)
-        and (r.user_id = auth.uid() or r.driver_id = auth.uid())
-    )
-  );
+-- The next two profiles policies reference driver_profiles and requests, so
+-- they're defined further down this file (search "profiles: public read of
+-- approved driver names" / "profiles: request participants read each
+-- other") — after those tables exist. CREATE POLICY validates its USING
+-- expression immediately, so referencing a not-yet-created table here would
+-- fail.
 
 -- Auto-create a profile row when a new auth user signs up.
 -- Role and full_name are passed via signup metadata (raw_user_meta_data).
@@ -233,6 +219,33 @@ create trigger requests_log_status_insert
 create trigger requests_log_status_update
   after update on requests
   for each row execute procedure log_request_status_change();
+
+-- ============ PROFILES POLICIES (deferred from above) ============
+-- Defined here, not alongside the other profiles policies near the top of
+-- this file, because both reference tables (driver_profiles, requests) that
+-- don't exist yet at that point — CREATE POLICY validates its USING
+-- expression immediately against real tables/columns.
+
+-- Lets users see the (public) name of any approved driver, e.g. in the
+-- nearby-drivers list before a request is even created.
+create policy "profiles: public read of approved driver names" on profiles
+  for select using (
+    exists (
+      select 1 from driver_profiles dp
+      where dp.profile_id = profiles.id and dp.approval_status = 'approved'
+    )
+  );
+
+-- Lets the two sides of a request see each other's full profile (e.g. phone
+-- number) once they are matched, without opening profiles up globally.
+create policy "profiles: request participants read each other" on profiles
+  for select using (
+    exists (
+      select 1 from requests r
+      where (r.user_id = profiles.id or r.driver_id = profiles.id)
+        and (r.user_id = auth.uid() or r.driver_id = auth.uid())
+    )
+  );
 
 -- ============ REALTIME ============
 alter publication supabase_realtime add table requests;
