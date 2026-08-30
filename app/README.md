@@ -11,9 +11,13 @@ Next.js 16 (App Router) · Supabase (Postgres, Auth, Realtime) · Mapbox · Tail
 ### 1. Supabase
 
 1. Créez un projet sur [supabase.com](https://supabase.com).
-2. Dans le SQL Editor du projet, exécutez le contenu de [`supabase/migrations/0001_init.sql`](./supabase/migrations/0001_init.sql). Il crée toutes les tables, les policies RLS et les triggers nécessaires.
-3. Dans **Project Settings → API**, copiez l'URL du projet et la clé `anon public`.
-4. Dans **Authentication → Sign In / Providers**, activez **Google** si vous voulez le bouton "Continuer avec Google" (voir étape 3 ci-dessous). Sinon, l'email/mot de passe fonctionne sans configuration additionnelle (vous pouvez désactiver la confirmation d'email dans **Authentication → Sign In / Email** pour simplifier les tests).
+2. Dans le SQL Editor du projet, exécutez **dans l'ordre** :
+   - [`supabase/migrations/0001_init.sql`](./supabase/migrations/0001_init.sql) — tables, policies RLS et triggers de base.
+   - [`supabase/migrations/0002_hardening.sql`](./supabase/migrations/0002_hardening.sql) — active PostGIS, ajoute la recherche géospatiale, l'acceptation atomique d'une course, et restreint la visibilité de la position des remorqueurs.
+   - [`supabase/migrations/0003_lockdown_driver_fields.sql`](./supabase/migrations/0003_lockdown_driver_fields.sql) — verrouille `rating`/`total_services` (même faille qu'`approval_status`) et restreint la lecture des demandes pending au seul remorqueur à qui elles ont été offertes.
+3. Déployez et planifiez la Edge Function de nettoyage — voir [`supabase/functions/cleanup-stale/README.md`](./supabase/functions/cleanup-stale/README.md).
+4. Dans **Project Settings → API**, copiez l'URL du projet et la clé `anon public`.
+5. Dans **Authentication → Sign In / Providers**, activez **Google** si vous voulez le bouton "Continuer avec Google" (voir section Google OAuth ci-dessous). Sinon, l'email/mot de passe fonctionne sans configuration additionnelle (vous pouvez désactiver la confirmation d'email dans **Authentication → Sign In / Email** pour simplifier les tests).
 
 ### 2. Mapbox
 
@@ -49,6 +53,22 @@ Par défaut, tout compte créé est `user` ou `driver` (choisi à l'inscription)
 ```sql
 update profiles set role = 'admin' where id = '<uuid-du-compte>';
 ```
+
+## Tests
+
+Tests unitaires (pricing, calcul de distance) — aucune infra requise :
+
+```bash
+npm run test
+```
+
+Test d'intégration RLS (confirme qu'un usager ne peut pas lire les requests d'un autre, et qu'un remorqueur ne peut pas s'auto-approuver) — nécessite une vraie instance Supabase jetable (locale via `supabase start`, ou un projet de test) :
+
+```bash
+SUPABASE_URL=... SUPABASE_ANON_KEY=... SUPABASE_SERVICE_ROLE_KEY=... npm run test:integration
+```
+
+Voir l'en-tête de [`scripts/rls-integration-test.ts`](./scripts/rls-integration-test.ts) pour le détail. Ne jamais pointer ce script vers un projet de production — il crée et supprime de vrais comptes.
 
 ## Ce qui est simulé dans cette version
 

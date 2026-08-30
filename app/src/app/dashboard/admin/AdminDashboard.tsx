@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { approveDriver, rejectDriver } from '@/lib/actions/admin';
 import { problemLabel, VEHICLE_TYPE_LABEL } from '@/lib/constants';
+import { toMoney } from '@/lib/pricing';
 import type { TowRequest } from '@/lib/supabase/types';
 
 interface PendingDriver {
@@ -67,7 +68,7 @@ export function AdminDashboard() {
       setRequestsToday(requests.filter((r) => new Date(r.created_at).toDateString() === today).length);
       setLiveRequests(requests.filter((r) => ['pending', 'matched', 'en_route', 'arrived'].includes(r.status)));
       setRevenue(
-        requests.filter((r) => r.status === 'completed').reduce((sum, r) => sum + Number(r.price_estimate), 0)
+        requests.filter((r) => r.status === 'completed').reduce((sum, r) => sum + toMoney(r.price_estimate), 0)
       );
 
       const events = eventsRes.data ?? [];

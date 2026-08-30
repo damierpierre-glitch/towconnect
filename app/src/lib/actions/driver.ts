@@ -50,12 +50,20 @@ export async function updateDriverLocation(lat: number, lng: number) {
   } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
 
+  const now = new Date().toISOString();
   await supabase
     .from('driver_profiles')
-    .update({ current_lat: lat, current_lng: lng, updated_at: new Date().toISOString() })
+    .update({ current_lat: lat, current_lng: lng, last_heartbeat_at: now, updated_at: now })
     .eq('profile_id', user.id);
 }
 
+// Goes through the accept_request() Postgres function (SECURITY DEFINER)
+// instead of a plain UPDATE: two drivers racing to accept the same offer, or
+// a driver double-clicking, must not both succeed. The function does the
+// pending->matched transition and the driver_id check atomically in a single
+// UPDATE ... WHERE, and raises a clean error if 0 rows matched (already
+// taken/cancelled) or if it would violate the one-active-job-per-driver
+// unique index.
 export async function acceptRequest(requestId: string) {
   const supabase = await createClient();
   const {
@@ -63,12 +71,7 @@ export async function acceptRequest(requestId: string) {
   } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
 
-  const { error } = await supabase
-    .from('requests')
-    .update({ status: 'matched' })
-    .eq('id', requestId)
-    .eq('driver_id', user.id)
-    .eq('status', 'pending');
+  const { error } = await supabase.rpc('accept_request', { p_request_id: requestId });
   if (error) throw error;
   revalidatePath('/dashboard/driver');
 }
@@ -100,6 +103,11 @@ export async function advanceRequestStatus(
   } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
 
+  // Marking a job 'completed' also bumps driver_profiles.total_services, but
+  // that increment happens server-side in a trigger (bump_driver_total_services
+  // in 0003_lockdown_driver_fields.sql), not here — total_services is locked
+  // down against direct writes from a driver's own session (same class of
+  // bug as the approval_status self-approval fix in 0002).
   const { data: request, error: updateError } = await supabase
     .from('requests')
     .update({ status: next })
@@ -108,19 +116,6 @@ export async function advanceRequestStatus(
     .select('price_estimate')
     .single();
   if (updateError) throw updateError;
-
-  if (next === 'completed') {
-    const { data: driverProfile } = await supabase
-      .from('driver_profiles')
-      .select('total_services')
-      .eq('profile_id', user.id)
-      .single();
-
-    await supabase
-      .from('driver_profiles')
-      .update({ total_services: (driverProfile?.total_services ?? 0) + 1 })
-      .eq('profile_id', user.id);
-  }
 
   revalidatePath('/dashboard/driver');
   return request;

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
 import { cancelRequest } from '@/lib/actions/requests';
+import { toMoney } from '@/lib/pricing';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { MapView } from '@/components/MapView';
@@ -48,7 +49,7 @@ export function StepTracking({
         .single();
       if (data) {
         setStatus(data.status);
-        setPrice(data.price_estimate);
+        setPrice(toMoney(data.price_estimate));
         setDriverId(data.driver_id);
       }
       setInitialized(true);
@@ -61,9 +62,9 @@ export function StepTracking({
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'requests', filter: `id=eq.${requestId}` },
         (payload) => {
-          const row = payload.new as { status: RequestStatus; price_estimate: number; driver_id: string | null };
+          const row = payload.new as { status: RequestStatus; price_estimate: number | string; driver_id: string | null };
           setStatus(row.status);
-          setPrice(row.price_estimate);
+          setPrice(toMoney(row.price_estimate));
           setDriverId(row.driver_id);
         }
       )
@@ -136,6 +137,7 @@ export function StepTracking({
     arrived: t('track_arrived'),
     completed: t('track_completed'),
     cancelled: t('track_cancelled'),
+    expired: t('track_expired'),
   };
 
   async function handleCancel() {
@@ -143,11 +145,11 @@ export function StepTracking({
     onCancelled();
   }
 
-  if (status === 'cancelled') {
+  if (status === 'cancelled' || status === 'expired') {
     return (
       <Card className="text-center py-10">
-        <div className="text-4xl mb-3">❌</div>
-        <p className="text-text-2">{t('track_cancelled')}</p>
+        <div className="text-4xl mb-3">{status === 'expired' ? '⌛' : '❌'}</div>
+        <p className="text-text-2">{status === 'expired' ? t('track_expired') : t('track_cancelled')}</p>
         <Button className="mt-6" onClick={onCancelled}>
           {lang === 'fr' ? "Nouvelle demande" : 'New request'}
         </Button>

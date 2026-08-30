@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { acceptRequest, advanceRequestStatus, declineRequest, toggleOnline, updateDriverInfo, updateDriverLocation } from '@/lib/actions/driver';
 import { problemLabel, CANADIAN_PROVINCES } from '@/lib/constants';
+import { toMoney } from '@/lib/pricing';
 import { Select, Input, Label } from '@/components/ui/Field';
 import type { DriverProfile, RequestStatus, TowRequest, VehicleType } from '@/lib/supabase/types';
 
@@ -92,7 +93,7 @@ export function DriverDashboard({
 
   const today = new Date().toDateString();
   const todayCount = completed.filter((r) => new Date(r.created_at).toDateString() === today).length;
-  const revenue = completed.reduce((sum, r) => sum + Number(r.price_estimate), 0);
+  const revenue = completed.reduce((sum, r) => sum + toMoney(r.price_estimate), 0);
 
   async function handleAccept(id: string) {
     try {
@@ -181,14 +182,14 @@ export function DriverDashboard({
             <Field label={lang === 'fr' ? 'Type' : 'Type'} value={problemLabel(pending.problem_type, lang)} />
             <Field label={lang === 'fr' ? 'Localisation' : 'Location'} value={pending.location_text} />
             <Field label={lang === 'fr' ? 'Véhicule' : 'Vehicle'} value={pending.vehicle_desc || '—'} />
-            <Field label={lang === 'fr' ? 'Prix' : 'Price'} value={`$${Number(pending.price_estimate).toFixed(0)}`} />
+            <Field label={lang === 'fr' ? 'Prix' : 'Price'} value={`$${toMoney(pending.price_estimate).toFixed(0)}`} />
           </div>
           <div className="flex gap-2">
             <Button variant="red" className="flex-1" onClick={() => handleDecline(pending.id)}>
               ❌ {t('btn_decline')}
             </Button>
             <Button variant="green" className="flex-[2]" onClick={() => handleAccept(pending.id)}>
-              ✅ {t('btn_accept')} — ${Number(pending.price_estimate).toFixed(0)}
+              ✅ {t('btn_accept')} — ${toMoney(pending.price_estimate).toFixed(0)}
             </Button>
           </div>
         </Card>
@@ -240,7 +241,7 @@ export function DriverDashboard({
                     </td>
                     <td className="py-3 pr-3">{problemLabel(r.problem_type, lang)}</td>
                     <td className="py-3 pr-3 text-text-2">{r.location_text}</td>
-                    <td className="py-3 font-semibold text-green">${Number(r.price_estimate).toFixed(0)}</td>
+                    <td className="py-3 font-semibold text-green">${toMoney(r.price_estimate).toFixed(0)}</td>
                   </tr>
                 ))}
               </tbody>

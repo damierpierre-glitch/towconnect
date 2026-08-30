@@ -52,6 +52,7 @@ export const dictionary = {
     track_arrived: 'Arrivé sur les lieux',
     track_completed: 'Service complété',
     track_cancelled: 'Demande annulée',
+    track_expired: "Demande expirée — aucun remorqueur n'a répondu à temps",
 
     feat1_title: 'Prix transparent',
     feat1_sub: "Vous voyez le prix estimé avant de confirmer, jamais de surprise à la facture.",
@@ -156,6 +157,7 @@ export const dictionary = {
     track_arrived: 'Arrived on site',
     track_completed: 'Service completed',
     track_cancelled: 'Request cancelled',
+    track_expired: 'Request expired — no driver responded in time',
 
     feat1_title: 'Transparent pricing',
     feat1_sub: 'See the estimated price before you confirm — never a surprise on the bill.',

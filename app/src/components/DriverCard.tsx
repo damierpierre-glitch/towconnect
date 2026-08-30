@@ -1,13 +1,15 @@
 import { Badge } from '@/components/ui/Badge';
 
+// Deliberately no lat/lng here: the nearby-drivers search returns a
+// server-computed distance only (see nearby_drivers() in
+// supabase/migrations/0002_hardening.sql) — a driver's exact position is
+// never sent to the browser before a rider has an active job with them.
 export interface NearbyDriver {
   profileId: string;
   name: string;
   rating: number;
   totalServices: number;
   vehicleType: string;
-  lat: number;
-  lng: number;
   distanceKm: number;
   etaMinutes: number;
   price: number;

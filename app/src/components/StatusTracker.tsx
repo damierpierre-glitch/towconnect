@@ -9,6 +9,7 @@ const ICONS: Record<RequestStatus, string> = {
   arrived: '📍',
   completed: '🎉',
   cancelled: '❌',
+  expired: '⌛',
 };
 
 export function StatusTracker({

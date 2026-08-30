@@ -7,9 +7,28 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { MapView } from '@/components/MapView';
 import { DriverCard, type NearbyDriver } from '@/components/DriverCard';
-import { distanceKm, estimateEtaMinutes, estimatePrice } from '@/lib/pricing';
+import { estimateEtaMinutes, estimatePrice } from '@/lib/pricing';
 import { VEHICLE_TYPE_LABEL } from '@/lib/constants';
 import type { RequestFormData } from './types';
+
+// Escalating search radius (item 7 of the hardening review): remote/rural
+// requests would otherwise hit an empty list at a fixed "city" radius. Each
+// tier is tried in order until one returns a driver; the UI tells the rider
+// which tier matched instead of silently searching wider.
+// There's no real province-boundary data in the schema (driver_profiles.province
+// is just a free-text code), so "provincial" here is approximated as a very
+// large radius rather than an actual polygon match.
+const SEARCH_TIERS: { radiusKm: number; labelKey: 'tier_local' | 'tier_wide' | 'tier_provincial' }[] = [
+  { radiusKm: 15, labelKey: 'tier_local' },
+  { radiusKm: 40, labelKey: 'tier_wide' },
+  { radiusKm: 350, labelKey: 'tier_provincial' },
+];
+
+const TIER_LABEL: Record<string, { fr: string; en: string }> = {
+  tier_local: { fr: 'À proximité', en: 'Nearby' },
+  tier_wide: { fr: 'Recherche élargie (40 km)', en: 'Widened search (40 km)' },
+  tier_provincial: { fr: 'Recherche provinciale', en: 'Province-wide search' },
+};
 
 export function StepDrivers({
   form,
@@ -22,51 +41,63 @@ export function StepDrivers({
   onBack: () => void;
   onConfirm: (driverId: string, price: number) => void;
 }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const [drivers, setDrivers] = useState<NearbyDriver[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [matchedTier, setMatchedTier] = useState<string | null>(null);
+  const [searchedAllTiers, setSearchedAllTiers] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+
     async function load() {
       setLoading(true);
+      setMatchedTier(null);
+      setSearchedAllTiers(false);
       const supabase = createClient();
-      const { data } = await supabase
-        .from('driver_profiles')
-        .select('profile_id, vehicle_type, rating, total_services, current_lat, current_lng, profiles(full_name)')
-        .eq('approval_status', 'approved')
-        .eq('is_online', true)
-        .not('current_lat', 'is', null)
-        .not('current_lng', 'is', null);
 
-      if (cancelled) return;
+      for (const tier of SEARCH_TIERS) {
+        const { data, error } = await supabase.rpc('nearby_drivers', {
+          p_lat: form.lat,
+          p_lng: form.lng,
+          p_radius_km: tier.radiusKm,
+          p_limit: 8,
+        });
+        if (cancelled) return;
+        if (error) {
+          setLoading(false);
+          return;
+        }
 
-      const nearby: NearbyDriver[] = (data ?? [])
-        .filter((d) => d.profile_id !== excludeDriverId)
-        .map((d) => {
-          const dist = distanceKm(form, { lat: d.current_lat!, lng: d.current_lng! });
-          const profile = Array.isArray(d.profiles) ? d.profiles[0] : d.profiles;
-          return {
+        const filtered = (data ?? []).filter((d) => d.profile_id !== excludeDriverId);
+        if (filtered.length > 0) {
+          const nearby: NearbyDriver[] = filtered.map((d) => ({
             profileId: d.profile_id,
-            name: profile?.full_name || 'Remorqueur',
+            name: d.full_name || 'Remorqueur',
             rating: d.rating,
             totalServices: d.total_services,
             vehicleType: VEHICLE_TYPE_LABEL[d.vehicle_type] ?? d.vehicle_type,
-            lat: d.current_lat!,
-            lng: d.current_lng!,
-            distanceKm: dist,
-            etaMinutes: estimateEtaMinutes(dist),
-            price: estimatePrice(dist, form.problemType),
-          };
-        })
-        .sort((a, b) => a.distanceKm - b.distanceKm)
-        .slice(0, 8);
+            distanceKm: d.distance_km,
+            etaMinutes: estimateEtaMinutes(d.distance_km),
+            price: estimatePrice(d.distance_km, form.problemType),
+          }));
+          setDrivers(nearby);
+          setSelected(nearby[0]?.profileId ?? null);
+          setMatchedTier(tier.labelKey);
+          setLoading(false);
+          return;
+        }
+      }
 
-      setDrivers(nearby);
-      setSelected(nearby[0]?.profileId ?? null);
+      // Exhausted every tier, including the province-wide one — explicit
+      // fallback state rather than an unexplained empty screen.
+      setDrivers([]);
+      setSelected(null);
+      setSearchedAllTiers(true);
       setLoading(false);
     }
+
     load();
     return () => {
       cancelled = true;
@@ -80,20 +111,33 @@ export function StepDrivers({
       <h3 className="font-display text-xl font-bold mb-1">{t('title_drivers')}</h3>
       <p className="text-sm text-text-2 mb-4">{t('sub_drivers')}</p>
 
+      {/* Only the rider's own location is plotted here — driver positions are
+          never sent to the browser before a request is matched (see
+          nearby_drivers() and the driver_profiles RLS policy). */}
       <MapView
         center={form}
         zoom={11}
         className="h-64 mb-4"
-        markers={[
-          { id: 'me', lat: form.lat, lng: form.lng, color: '#ff5c1a' },
-          ...drivers.map((d) => ({ id: d.profileId, lat: d.lat, lng: d.lng, color: '#3b82f6' })),
-        ]}
+        markers={[{ id: 'me', lat: form.lat, lng: form.lng, color: '#ff5c1a' }]}
       />
+
+      {matchedTier && matchedTier !== 'tier_local' ? (
+        <p className="text-xs text-orange mb-3 text-center">
+          {lang === 'fr' ? TIER_LABEL[matchedTier].fr : TIER_LABEL[matchedTier].en}
+        </p>
+      ) : null}
 
       {loading ? (
         <p className="text-sm text-muted py-6 text-center">…</p>
-      ) : drivers.length === 0 ? (
-        <p className="text-sm text-muted py-6 text-center">{t('no_drivers')}</p>
+      ) : searchedAllTiers ? (
+        <div className="text-center py-6">
+          <p className="text-sm text-muted mb-1">{t('no_drivers')}</p>
+          <p className="text-xs text-muted">
+            {lang === 'fr'
+              ? `Recherche élargie jusqu'à ${SEARCH_TIERS[SEARCH_TIERS.length - 1].radiusKm} km sans résultat.`
+              : `Widened search up to ${SEARCH_TIERS[SEARCH_TIERS.length - 1].radiusKm} km found nothing.`}
+          </p>
+        </div>
       ) : (
         <div className="flex flex-col gap-2.5">
           {drivers.map((d) => (

@@ -16,6 +16,16 @@ export function estimatePrice(distanceKm: number, problemType: string): number {
   return Math.round(price * 100) / 100;
 }
 
+// Postgres `numeric` columns (used for price_estimate — money is never stored
+// as float) come back from PostgREST as JSON strings to avoid precision loss.
+// Every display/arithmetic site must parse through this before using the
+// value as a number.
+export function toMoney(value: number | string | null | undefined): number {
+  if (value == null) return 0;
+  const n = typeof value === 'number' ? value : parseFloat(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
 // Haversine distance in kilometres between two lat/lng points.
 export function distanceKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
   const R = 6371;

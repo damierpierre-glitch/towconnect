@@ -6,7 +6,8 @@ export type RequestStatus =
   | 'en_route'
   | 'arrived'
   | 'completed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'expired';
 export type VehicleType = 'standard' | 'flatbed' | 'heavy_duty';
 
 // These must be `type` aliases, not `interface` declarations: TypeScript's
@@ -32,7 +33,17 @@ export type DriverProfile = {
   approval_status: DriverApprovalStatus;
   current_lat: number | null;
   current_lng: number | null;
+  last_heartbeat_at: string | null;
   updated_at: string;
+};
+
+export type NearbyDriverRow = {
+  profile_id: string;
+  full_name: string;
+  rating: number;
+  total_services: number;
+  vehicle_type: VehicleType;
+  distance_km: number;
 };
 
 export type TowRequest = {
@@ -46,7 +57,9 @@ export type TowRequest = {
   vehicle_desc: string | null;
   notes: string | null;
   status: RequestStatus;
-  price_estimate: number;
+  // `numeric` in Postgres → PostgREST serializes it as a string. Always parse
+  // with toMoney() before treating it as a number.
+  price_estimate: number | string;
   created_at: string;
   updated_at: string;
 };
@@ -124,7 +137,21 @@ export interface Database {
       };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      accept_request: {
+        Args: { p_request_id: string };
+        Returns: TowRequest;
+      };
+      nearby_drivers: {
+        Args: {
+          p_lat: number;
+          p_lng: number;
+          p_radius_km: number;
+          p_limit?: number;
+        };
+        Returns: NearbyDriverRow[];
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };
