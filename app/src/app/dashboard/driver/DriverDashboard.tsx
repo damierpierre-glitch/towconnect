@@ -246,7 +246,12 @@ export function DriverDashboard({
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <StatCard label={t('stat_today')} value={String(todayCount)} />
         <StatCard label={t('stat_revenue')} value={`$${revenue.toFixed(0)}`} />
-        <StatCard label={t('stat_rating')} value={`${driverProfile.rating.toFixed(1)} ⭐`} />
+        {/* Same rule as the rider-facing card: the 5.0 default is a
+            placeholder, not a score, until somebody has actually rated a job. */}
+        <StatCard
+          label={t('stat_rating')}
+          value={driverProfile.total_services > 0 ? `${driverProfile.rating.toFixed(1)} ⭐` : t('driver_new')}
+        />
         <StatCard label={t('stat_total')} value={String(driverProfile.total_services)} />
       </div>
 
@@ -261,6 +266,21 @@ export function DriverDashboard({
           <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
             <Field label={lang === 'fr' ? 'Type' : 'Type'} value={problemLabel(pending.problem_type, lang)} />
             <Field label={lang === 'fr' ? 'Localisation' : 'Location'} value={pending.location_text} />
+            {/* A tow job is "pick the car up AND take it somewhere". Without
+                this the driver had 18 seconds to accept a job whose
+                destination they could not see anywhere — not on this card,
+                not after accepting. */}
+            {pending.destination_address ? (
+              <Field
+                wide
+                label={lang === 'fr' ? 'Destination' : 'Destination'}
+                value={
+                  pending.tow_distance_km != null
+                    ? `${pending.destination_address} (${toMoney(pending.tow_distance_km).toFixed(1)} km)`
+                    : pending.destination_address
+                }
+              />
+            ) : null}
             <Field label={lang === 'fr' ? 'Véhicule' : 'Vehicle'} value={pending.vehicle_desc || '—'} />
             <Field label={lang === 'fr' ? 'Prix' : 'Price'} value={`$${toMoney(pending.price_estimate).toFixed(0)}`} />
             {driverProfile.current_lat != null && driverProfile.current_lng != null ? (
@@ -289,9 +309,17 @@ export function DriverDashboard({
 
       {active ? (
         <Card className="mb-6">
-          <h3 className="font-display text-base font-bold mb-4">
+          <h3 className="font-display text-base font-bold mb-1">
             {problemLabel(active.problem_type, lang)} · {active.location_text}
           </h3>
+          {active.destination_address ? (
+            <p className="text-sm text-text-2 mb-4">
+              ➜ {active.destination_address}
+              {active.tow_distance_km != null ? ` (${toMoney(active.tow_distance_km).toFixed(1)} km)` : ''}
+            </p>
+          ) : (
+            <div className="mb-4" />
+          )}
           <div className="flex gap-2 mb-4">
             {active.status === 'matched' ? (
               <Button full onClick={() => handleAdvance(active.id, 'en_route')}>
@@ -418,9 +446,9 @@ function OnboardingForm({
   );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+function Field({ label, value, wide }: { label: string; value: string; wide?: boolean }) {
   return (
-    <div>
+    <div className={wide ? 'col-span-2' : undefined}>
       <div className="text-xs text-muted mb-1">{label}</div>
       <div className="font-semibold">{value}</div>
     </div>

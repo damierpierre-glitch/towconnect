@@ -34,6 +34,7 @@ export function Receipt({
   const distance = toMoney(request.price_distance);
   const surcharge = toMoney(request.price_surcharge);
   const total = toMoney(request.price_estimate);
+  const towKm = request.tow_distance_km == null ? null : toMoney(request.tow_distance_km);
 
   return (
     <div className="max-w-md mx-auto px-6 py-8">
@@ -63,7 +64,22 @@ export function Receipt({
 
         <div className="border-t border-steel/60 pt-4 mb-5">
           <PriceLine label={lang === 'fr' ? 'Frais de base' : 'Base fare'} value={base} />
-          <PriceLine label={lang === 'fr' ? 'Distance' : 'Distance'} value={distance} />
+          {/* The kilometres are the only thing that makes this line checkable:
+              a bare "$4.50" next to "Distance" is exactly the opaque invoice
+              line this product exists to replace. tow_distance_km is frozen
+              onto the request at creation (0012), so it is the billed figure,
+              not a recalculation. Older requests predate the column and simply
+              show the amount. */}
+          <PriceLine
+            label={
+              towKm != null
+                ? `${lang === 'fr' ? 'Distance' : 'Distance'} · ${towKm.toFixed(1)} km`
+                : lang === 'fr'
+                  ? 'Distance'
+                  : 'Distance'
+            }
+            value={distance}
+          />
           {surcharge > 0 ? <PriceLine label={lang === 'fr' ? 'Supplément' : 'Surcharge'} value={surcharge} /> : null}
           <div className="flex justify-between items-center pt-2 mt-2 border-t border-steel/60">
             <span className="font-semibold">{t('receipt_total')}</span>

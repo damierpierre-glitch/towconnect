@@ -56,3 +56,7 @@ next-env.d.ts
 # no business in the repository.
 **/supabase/.branches
 **/supabase/.temp
+
+# Throwaway end-to-end fixture state (account ids/emails) written by
+# app/scripts/e2e-fixtures.ts. Disposable, and never anything to publish.
+app/scripts/.e2e-fixtures.json

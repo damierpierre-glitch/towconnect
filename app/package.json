@@ -9,7 +9,9 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:integration": "tsx scripts/rls-integration-test.ts"
+    "test:integration": "tsx scripts/rls-integration-test.ts",
+    "verify:functions": "tsx scripts/verify-edge-functions.ts",
+    "verify:webhook": "tsx scripts/verify-remote-webhook.ts"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.8.2",

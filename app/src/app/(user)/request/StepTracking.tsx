@@ -18,7 +18,13 @@ interface DriverInfo {
   name: string;
   phone: string | null;
   vehicleType: string;
-  rating: number;
+  // null until at least one job is behind them. driver_profiles.rating
+  // defaults to 5.0 for every new account (0001_init.sql), so rendering it
+  // unconditionally showed a perfect score nobody had given - to a customer
+  // deciding whether to hand a stranger their car. Never show a rating that
+  // has not been earned.
+  rating: number | null;
+  totalServices: number;
   plate: string | null;
   lat: number | null;
   lng: number | null;
@@ -142,7 +148,7 @@ export function StepTracking({
     async function loadDriver() {
       const { data } = await supabase
         .from('driver_profiles')
-        .select('vehicle_type, rating, license_plate, current_lat, current_lng, profiles(full_name, phone)')
+        .select('vehicle_type, rating, total_services, license_plate, current_lat, current_lng, profiles(full_name, phone)')
         .eq('profile_id', currentDriverId)
         .single();
       if (data) {
@@ -151,7 +157,8 @@ export function StepTracking({
           name: profile?.full_name || 'Remorqueur',
           phone: profile?.phone ?? null,
           vehicleType: data.vehicle_type,
-          rating: data.rating,
+          rating: data.total_services > 0 ? data.rating : null,
+          totalServices: data.total_services,
           plate: data.license_plate,
           lat: data.current_lat,
           lng: data.current_lng,
@@ -290,7 +297,7 @@ export function StepTracking({
           <div className="flex-1 min-w-0">
             <div className="font-semibold text-sm truncate">{driver.name}</div>
             <div className="text-xs text-muted">
-              ⭐ {driver.rating.toFixed(1)} · 🚛 {driver.vehicleType}
+              {driver.rating != null ? `⭐ ${driver.rating.toFixed(1)}` : t('driver_new')} · 🚛 {driver.vehicleType}
               {driver.plate ? ` · ${t('driver_plate')} ${driver.plate}` : ''}
             </div>
           </div>
