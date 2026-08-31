@@ -66,7 +66,7 @@ export function AdminDashboard() {
       const requests = requestsRes.data ?? [];
       const today = new Date().toDateString();
       setRequestsToday(requests.filter((r) => new Date(r.created_at).toDateString() === today).length);
-      setLiveRequests(requests.filter((r) => ['pending', 'matched', 'en_route', 'arrived'].includes(r.status)));
+      setLiveRequests(requests.filter((r) => ['pending', 'matched', 'en_route', 'arrived', 'in_progress'].includes(r.status)));
       setRevenue(
         requests.filter((r) => r.status === 'completed').reduce((sum, r) => sum + toMoney(r.price_estimate), 0)
       );

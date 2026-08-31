@@ -34,13 +34,44 @@ export function NavBar({ role }: NavBarProps) {
 
       <div className="hidden md:flex items-center gap-1">
         {tab ? (
-          <span
+          <Link
+            href={tab.href}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium ${
               pathname.startsWith(tab.href) ? 'bg-orange text-white' : 'text-muted'
             }`}
           >
             {tab.icon} {t(tab.key)}
-          </span>
+          </Link>
+        ) : null}
+        {role === 'user' ? (
+          <Link
+            href="/vehicles"
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium ${
+              pathname.startsWith('/vehicles') ? 'bg-orange text-white' : 'text-muted'
+            }`}
+          >
+            🚗 {t('nav_vehicles')}
+          </Link>
+        ) : null}
+        {role === 'user' ? (
+          <Link
+            href="/history"
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium ${
+              pathname.startsWith('/history') ? 'bg-orange text-white' : 'text-muted'
+            }`}
+          >
+            🧾 {t('nav_history')}
+          </Link>
+        ) : null}
+        {role === 'user' ? (
+          <Link
+            href="/payment-methods"
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium ${
+              pathname.startsWith('/payment-methods') ? 'bg-orange text-white' : 'text-muted'
+            }`}
+          >
+            💳 {t('nav_payment_methods')}
+          </Link>
         ) : null}
       </div>
 

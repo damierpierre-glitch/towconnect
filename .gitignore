@@ -35,6 +35,12 @@ yarn-error.log*
 .env.production
 .env.development
 
+# Local scratch file holding plaintext credentials — kept out of Git so a
+# `git add -A` can never publish it. The file itself still exists in the
+# working tree; the credentials in it should be rotated and moved into
+# .env.local / a password manager. See TOWCONNECT_LIVE_VALIDATION_REPORT.md.
+Infos.txt
+
 # vercel
 .vercel
 
@@ -43,5 +49,10 @@ yarn-error.log*
 next-env.d.ts
 
 # supabase local dev
-supabase/.branches
-supabase/.temp
+# Leading-slash-free patterns that CONTAIN a slash are anchored to this
+# file's directory, so plain `supabase/.temp` only matched a repo-root
+# `supabase/` — never the real one at `app/supabase/`. The CLI writes its
+# linked-project state (project ref, pooler connection URL) there, which has
+# no business in the repository.
+**/supabase/.branches
+**/supabase/.temp

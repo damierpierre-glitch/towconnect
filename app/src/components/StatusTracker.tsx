@@ -1,12 +1,13 @@
 import type { RequestStatus } from '@/lib/supabase/types';
 
-const ORDER: RequestStatus[] = ['pending', 'matched', 'en_route', 'arrived', 'completed'];
+const ORDER: RequestStatus[] = ['pending', 'matched', 'en_route', 'arrived', 'in_progress', 'completed'];
 
 const ICONS: Record<RequestStatus, string> = {
   pending: '✅',
   matched: '✅',
   en_route: '🚛',
   arrived: '📍',
+  in_progress: '🔧',
   completed: '🎉',
   cancelled: '❌',
   expired: '⌛',

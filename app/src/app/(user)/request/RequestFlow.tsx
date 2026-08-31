@@ -3,94 +3,182 @@
 import { useState } from 'react';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
 import { useToast } from '@/components/ToastProvider';
-import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
-import { createRequest, reassignDriver } from '@/lib/actions/requests';
+import { cancelRequest, createRequest } from '@/lib/actions/requests';
+import { retryRequestPayment } from '@/lib/actions/payments';
+import type { PaymentStatus, TowRequest, Vehicle } from '@/lib/supabase/types';
 import { StepForm } from './StepForm';
-import { StepDrivers } from './StepDrivers';
+import { StepEstimate } from './StepEstimate';
+import { StepPayment } from './StepPayment';
 import { StepTracking } from './StepTracking';
 import type { RequestFormData } from './types';
 
-type Step = 'idle' | 'form' | 'drivers' | 'tracking';
+type Step = 'form' | 'estimate' | 'payment' | 'tracking';
 
-const STEP_ORDER: Step[] = ['form', 'drivers', 'tracking'];
+const STEP_ORDER: Step[] = ['form', 'estimate', 'tracking'];
 
-export function RequestFlow() {
+export function RequestFlow({
+  userId,
+  vehicles,
+  initialActiveRequest,
+  initialUnresolvedPaymentStatus,
+}: {
+  userId: string;
+  vehicles: Vehicle[];
+  initialActiveRequest: TowRequest | null;
+  // Set when the resumed request's payment never resolved — that request is
+  // 'pending' but dispatch never ran for it, so tracking would show an
+  // endless "searching" with no driver ever arriving. Land on the payment
+  // step instead, where the rider can retry or cancel.
+  initialUnresolvedPaymentStatus: PaymentStatus | null;
+}) {
   const { t } = useLanguage();
   const { showToast } = useToast();
-  const [step, setStep] = useState<Step>('idle');
+
+  // The DB is the source of truth for "is there an active intervention" —
+  // page.tsx already fetched it server-side (RLS-scoped to this user) before
+  // this component ever mounts, so a refresh or a reopened tab lands
+  // straight back in tracking — searching, offer outstanding, matched, or en
+  // route, StepTracking itself figures out which — instead of losing state.
+  const [step, setStep] = useState<Step>(
+    initialActiveRequest ? (initialUnresolvedPaymentStatus ? 'payment' : 'tracking') : 'form'
+  );
   const [form, setForm] = useState<RequestFormData | null>(null);
-  const [requestId, setRequestId] = useState<string | null>(null);
-  const [declinedDriverId, setDeclinedDriverId] = useState<string | undefined>(undefined);
+  const [requestId, setRequestId] = useState<string | null>(initialActiveRequest?.id ?? null);
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(
+    initialActiveRequest ? { lat: initialActiveRequest.lat, lng: initialActiveRequest.lng } : null
+  );
+  const [createdAt, setCreatedAt] = useState<string | null>(initialActiveRequest?.created_at ?? null);
+  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus | 'skipped' | null>(
+    initialUnresolvedPaymentStatus
+  );
+  const [paymentClientSecret, setPaymentClientSecret] = useState<string | null>(null);
+  const [paymentMethodId, setPaymentMethodId] = useState<string | null>(null);
+  const [retryingPayment, setRetryingPayment] = useState(false);
 
   function handleFormSubmit(data: RequestFormData) {
     setForm(data);
-    setStep('drivers');
+    setStep('estimate');
   }
 
-  async function handleConfirm(driverId: string, price: number) {
+  function enterTracking(id: string, lat: number, lng: number) {
+    setRequestId(id);
+    setUserLocation({ lat, lng });
+    setCreatedAt(new Date().toISOString());
+    showToast('🔍', t('dispatch_searching'));
+    setStep('tracking');
+  }
+
+  async function handleConfirm() {
     if (!form) return;
     try {
-      if (requestId) {
-        // Re-offering to a new driver after a previous decline.
-        await reassignDriver(requestId, driverId);
-      } else {
-        const id = await createRequest({
-          problemType: form.problemType,
-          locationText: form.locationText,
-          lat: form.lat,
-          lng: form.lng,
-          vehicleDesc: form.vehicleDesc,
-          notes: form.notes,
-          driverId,
-          price,
-        });
-        setRequestId(id);
+      const result = await createRequest({
+        problemType: form.problemType,
+        locationText: form.locationText,
+        lat: form.lat,
+        lng: form.lng,
+        vehicleDesc: form.vehicleDesc,
+        vehicleId: form.vehicleId,
+        notes: form.notes,
+        destinationAddress: form.destinationAddress,
+        destinationLat: form.destinationLat,
+        destinationLng: form.destinationLng,
+      });
+
+      if (result.paymentStatus === 'authorized' || result.paymentStatus === 'skipped') {
+        enterTracking(result.requestId, form.lat, form.lng);
+        return;
       }
-      showToast('🚛', t('title_onway'));
-      setStep('tracking');
+
+      // requires_action / failed — payment must be resolved before dispatch.
+      setRequestId(result.requestId);
+      setPaymentStatus(result.paymentStatus);
+      setPaymentClientSecret(result.paymentClientSecret);
+      setPaymentMethodId(result.paymentMethodId);
+      setStep('payment');
     } catch {
       showToast('⚠️', t('error_generic'));
     }
   }
 
-  function handleDriverDeclined(previousDriverId?: string) {
+  function handlePaymentResolved() {
     if (!requestId) return;
-    setDeclinedDriverId(previousDriverId);
-    showToast('❌', t('no_drivers'));
-    setStep('drivers');
+    // On a resumed request `form` is null (it was never re-filled), so fall
+    // back to the coordinates the request itself was created with.
+    const lat = form?.lat ?? userLocation?.lat ?? initialActiveRequest?.lat;
+    const lng = form?.lng ?? userLocation?.lng ?? initialActiveRequest?.lng;
+    if (lat == null || lng == null) return;
+    enterTracking(requestId, lat, lng);
+  }
+
+  async function handlePaymentRetry() {
+    if (!requestId) return;
+    setRetryingPayment(true);
+    try {
+      const result = await retryRequestPayment(requestId);
+      if (result.status === 'authorized') {
+        handlePaymentResolved();
+      } else {
+        setPaymentStatus(result.status);
+        setPaymentClientSecret(result.clientSecret);
+        setPaymentMethodId(result.paymentMethodId);
+      }
+    } catch {
+      showToast('⚠️', t('error_generic'));
+    } finally {
+      setRetryingPayment(false);
+    }
+  }
+
+  async function handlePaymentGiveUp() {
+    if (requestId) {
+      try {
+        await cancelRequest(requestId);
+      } catch {
+        // Best effort — reset() below returns the user to a blank form
+        // regardless of whether the cancel call itself succeeded.
+      }
+    }
+    reset();
   }
 
   function reset() {
-    setStep('idle');
+    setStep('form');
     setForm(null);
     setRequestId(null);
-    setDeclinedDriverId(undefined);
+    setUserLocation(null);
+    setCreatedAt(null);
+    setPaymentStatus(null);
+    setPaymentClientSecret(null);
+    setPaymentMethodId(null);
   }
 
-  if (step === 'idle') {
-    return <Hero onStart={() => setStep('form')} />;
-  }
-
-  const currentIndex = STEP_ORDER.indexOf(step);
+  const currentIndex = STEP_ORDER.indexOf(step === 'payment' ? 'estimate' : step);
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-8">
       <StepIndicator currentIndex={currentIndex} />
-      {step === 'form' ? <StepForm onSubmit={handleFormSubmit} /> : null}
-      {step === 'drivers' && form ? (
-        <StepDrivers
-          form={form}
-          excludeDriverId={declinedDriverId}
-          onBack={() => setStep('form')}
-          onConfirm={handleConfirm}
+      {step === 'form' ? <StepForm vehicles={vehicles} onSubmit={handleFormSubmit} /> : null}
+      {step === 'estimate' && form ? (
+        <StepEstimate form={form} onBack={() => setStep('form')} onConfirm={handleConfirm} />
+      ) : null}
+      {step === 'payment' && requestId && paymentStatus && paymentStatus !== 'skipped' ? (
+        <StepPayment
+          requestId={requestId}
+          status={paymentStatus}
+          clientSecret={paymentClientSecret}
+          paymentMethodId={paymentMethodId}
+          retrying={retryingPayment}
+          onResolved={handlePaymentResolved}
+          onRetry={handlePaymentRetry}
+          onGiveUp={handlePaymentGiveUp}
         />
       ) : null}
-      {step === 'tracking' && requestId && form ? (
+      {step === 'tracking' && requestId && userLocation && createdAt ? (
         <StepTracking
           requestId={requestId}
-          userLocation={form}
-          onDriverDeclined={handleDriverDeclined}
+          userId={userId}
+          userLocation={userLocation}
+          createdAt={createdAt}
           onCancelled={reset}
         />
       ) : null}
@@ -100,7 +188,7 @@ export function RequestFlow() {
 
 function StepIndicator({ currentIndex }: { currentIndex: number }) {
   const { t } = useLanguage();
-  const labels = [t('step_situation'), t('step_driver'), t('step_confirm')];
+  const labels = [t('step_situation'), t('step_estimate'), t('step_confirm')];
 
   return (
     <div className="flex mb-7">
@@ -129,63 +217,5 @@ function StepIndicator({ currentIndex }: { currentIndex: number }) {
         </div>
       ))}
     </div>
-  );
-}
-
-function Hero({ onStart }: { onStart: () => void }) {
-  const { t } = useLanguage();
-
-  return (
-    <div>
-      <div
-        className="text-center px-5 pt-16 pb-10"
-        style={{
-          background:
-            'radial-gradient(ellipse at 50% 0%, rgba(255,92,26,0.12) 0%, transparent 70%)',
-        }}
-      >
-        <span className="text-6xl mb-4 block">🚨</span>
-        <h1 className="font-display text-3xl md:text-[42px] font-extrabold leading-tight mb-4">
-          {t('hero_title_1')}
-          <br />
-          {t('hero_title_2')} <span className="text-orange">{t('hero_title_3')}</span>
-        </h1>
-        <p className="text-[17px] text-text-2 max-w-lg mx-auto mb-8 leading-relaxed">
-          {t('hero_sub')}
-        </p>
-        <div className="flex gap-2.5 justify-center flex-wrap mb-10">
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-green/15 text-green">
-            {t('badge_canada')}
-          </span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-orange/15 text-orange">
-            {t('badge_fast')}
-          </span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue/15 text-blue">
-            {t('badge_safe')}
-          </span>
-        </div>
-        <Button size="lg" onClick={onStart}>
-          🚨 {t('btn_emergency')}
-        </Button>
-      </div>
-
-      <div className="max-w-5xl mx-auto px-6 pb-16">
-        <div className="grid md:grid-cols-3 gap-4">
-          <FeatureCard icon="💵" title={t('feat1_title')} sub={t('feat1_sub')} />
-          <FeatureCard icon="📍" title={t('feat2_title')} sub={t('feat2_sub')} />
-          <FeatureCard icon="🍁" title={t('feat3_title')} sub={t('feat3_sub')} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function FeatureCard({ icon, title, sub }: { icon: string; title: string; sub: string }) {
-  return (
-    <Card className="text-center py-7 px-5">
-      <div className="text-4xl mb-3">{icon}</div>
-      <h4 className="font-display font-bold mb-1.5">{title}</h4>
-      <p className="text-sm text-muted">{sub}</p>
-    </Card>
   );
 }

@@ -7,9 +7,10 @@ import { useToast } from '@/components/ToastProvider';
 import { Card, StatCard } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { Chat } from '@/components/Chat';
 import { acceptRequest, advanceRequestStatus, declineRequest, toggleOnline, updateDriverInfo, updateDriverLocation } from '@/lib/actions/driver';
-import { problemLabel, CANADIAN_PROVINCES } from '@/lib/constants';
-import { toMoney } from '@/lib/pricing';
+import { problemLabel, CANADIAN_PROVINCES, DRIVER_QUICK_MESSAGES } from '@/lib/constants';
+import { distanceKm, estimateEtaMinutes, toMoney } from '@/lib/pricing';
 import { Select, Input, Label } from '@/components/ui/Field';
 import type { DriverProfile, RequestStatus, TowRequest, VehicleType } from '@/lib/supabase/types';
 
@@ -27,11 +28,18 @@ export function DriverDashboard({
   const [driverProfile, setDriverProfile] = useState(initialDriverProfile);
   const [myRequests, setMyRequests] = useState<TowRequest[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const [offerExpiresAt, setOfferExpiresAt] = useState<string | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
 
   const isApproved = driverProfile.approval_status === 'approved';
   const needsOnboarding = !driverProfile.province;
 
-  // Load this driver's request history + active jobs, then stay in sync via realtime.
+  // Load this driver's request history + active jobs, then stay in sync via
+  // realtime. Two channels, not one: a `requests` row whose driver_id just
+  // got cleared (offer declined/timed out) no longer matches this driver's
+  // `driver_id=eq.${driverId}` filter on the NEW row, so that transition
+  // alone would never reach this subscription — dispatch_offers.driver_id
+  // never changes, so its own channel reliably catches "my offer just ended".
   useEffect(() => {
     const supabase = createClient();
 
@@ -47,7 +55,7 @@ export function DriverDashboard({
     }
     load();
 
-    const channel = supabase
+    const requestsChannel = supabase
       .channel(`driver-requests-${driverId}`)
       .on(
         'postgres_changes',
@@ -56,8 +64,18 @@ export function DriverDashboard({
       )
       .subscribe();
 
+    const offersChannel = supabase
+      .channel(`driver-offers-${driverId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'dispatch_offers', filter: `driver_id=eq.${driverId}` },
+        () => load()
+      )
+      .subscribe();
+
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(requestsChannel);
+      supabase.removeChannel(offersChannel);
     };
   }, [driverId]);
 
@@ -88,12 +106,71 @@ export function DriverDashboard({
   }
 
   const pending = myRequests.find((r) => r.status === 'pending');
-  const active = myRequests.find((r) => ['matched', 'en_route', 'arrived'].includes(r.status));
+  const active = myRequests.find((r) => ['matched', 'en_route', 'arrived', 'in_progress'].includes(r.status));
   const completed = myRequests.filter((r) => r.status === 'completed');
 
   const today = new Date().toDateString();
   const todayCount = completed.filter((r) => new Date(r.created_at).toDateString() === today).length;
   const revenue = completed.reduce((sum, r) => sum + toMoney(r.price_estimate), 0);
+
+  // Offer countdown — read-only (dispatch_offers has no client-writable
+  // policy). expires_at is the server-side truth; this is purely a display
+  // timer, never what actually cuts the offer off.
+  useEffect(() => {
+    if (!pending) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setOfferExpiresAt(null);
+      return;
+    }
+    const supabase = createClient();
+    let cancelled = false;
+    supabase
+      .from('dispatch_offers')
+      .select('expires_at')
+      .eq('request_id', pending.id)
+      .eq('driver_id', driverId)
+      .eq('status', 'offered')
+      .order('offered_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled) setOfferExpiresAt(data?.expires_at ?? null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending?.id, driverId]);
+
+  useEffect(() => {
+    if (!offerExpiresAt) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSecondsLeft(null);
+      return;
+    }
+    function tick() {
+      const remaining = Math.max(0, Math.round((new Date(offerExpiresAt!).getTime() - Date.now()) / 1000));
+      setSecondsLeft(remaining);
+    }
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [offerExpiresAt]);
+
+  // Same nudge as the rider's tracking screen: while this driver holds an
+  // outstanding offer, poll every few seconds so an abandoned offer (this
+  // driver saw it, didn't respond) advances to the next candidate quickly
+  // even if the rider's own tab happens to be closed. A no-op if nothing is
+  // actually overdue yet.
+  useEffect(() => {
+    if (!pending) return;
+    const supabase = createClient();
+    const interval = setInterval(() => {
+      supabase.rpc('nudge_dispatch', { p_request_id: pending.id });
+    }, 5000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending?.id]);
 
   async function handleAccept(id: string) {
     try {
@@ -113,7 +190,7 @@ export function DriverDashboard({
     }
   }
 
-  async function handleAdvance(id: string, next: Extract<RequestStatus, 'en_route' | 'arrived' | 'completed'>) {
+  async function handleAdvance(id: string, next: Extract<RequestStatus, 'en_route' | 'arrived' | 'in_progress' | 'completed'>) {
     try {
       await advanceRequestStatus(id, next);
       if (next === 'completed') {
@@ -177,12 +254,23 @@ export function DriverDashboard({
         <Card orange className="mb-6">
           <div className="flex justify-between items-center mb-4">
             <h3 className="font-display text-base font-bold">{t('new_request')}</h3>
+            {secondsLeft !== null ? (
+              <span className="font-display text-lg font-bold text-orange tabular-nums">{secondsLeft}s</span>
+            ) : null}
           </div>
           <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
             <Field label={lang === 'fr' ? 'Type' : 'Type'} value={problemLabel(pending.problem_type, lang)} />
             <Field label={lang === 'fr' ? 'Localisation' : 'Location'} value={pending.location_text} />
             <Field label={lang === 'fr' ? 'Véhicule' : 'Vehicle'} value={pending.vehicle_desc || '—'} />
             <Field label={lang === 'fr' ? 'Prix' : 'Price'} value={`$${toMoney(pending.price_estimate).toFixed(0)}`} />
+            {driverProfile.current_lat != null && driverProfile.current_lng != null ? (
+              <Field
+                label="ETA"
+                value={`~${estimateEtaMinutes(
+                  distanceKm({ lat: driverProfile.current_lat, lng: driverProfile.current_lng }, { lat: pending.lat, lng: pending.lng })
+                )} min`}
+              />
+            ) : null}
           </div>
           <div className="flex gap-2">
             <Button variant="red" className="flex-1" onClick={() => handleDecline(pending.id)}>
@@ -204,7 +292,7 @@ export function DriverDashboard({
           <h3 className="font-display text-base font-bold mb-4">
             {problemLabel(active.problem_type, lang)} · {active.location_text}
           </h3>
-          <div className="flex gap-2">
+          <div className="flex gap-2 mb-4">
             {active.status === 'matched' ? (
               <Button full onClick={() => handleAdvance(active.id, 'en_route')}>
                 🚛 {t('btn_start_route')}
@@ -216,11 +304,18 @@ export function DriverDashboard({
               </Button>
             ) : null}
             {active.status === 'arrived' ? (
+              <Button full onClick={() => handleAdvance(active.id, 'in_progress')}>
+                🔧 {t('btn_start_intervention')}
+              </Button>
+            ) : null}
+            {active.status === 'in_progress' ? (
               <Button full variant="green" onClick={() => handleAdvance(active.id, 'completed')}>
-                🎉 {t('btn_complete')}
+                🎉 {t('btn_finish')}
               </Button>
             ) : null}
           </div>
+
+          <Chat requestId={active.id} currentUserId={driverId} quickMessages={DRIVER_QUICK_MESSAGES} />
         </Card>
       ) : null}
 

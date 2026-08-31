@@ -16,6 +16,33 @@ export function estimatePrice(distanceKm: number, problemType: string): number {
   return Math.round(price * 100) / 100;
 }
 
+export interface PriceBreakdown {
+  base: number;
+  distance: number;
+  surcharge: number;
+  total: number;
+}
+
+// Same formula as estimatePrice(), split into the line items a transparent
+// receipt needs (Phase 4). For a towing job, `towDistanceKm` (pickup ->
+// destination — the actual service delivered) is billed at the same
+// per-km rate as the driver's approach distance: one rate, added onto the
+// total billable distance, rather than two different rates. Simpler and
+// consistent with "no opaque pricing"; revisit only if the business decides
+// towing distance should be priced differently from positioning distance.
+export function estimatePriceBreakdown(input: {
+  driverDistanceKm: number;
+  towDistanceKm?: number;
+  problemType: string;
+}): PriceBreakdown {
+  const surcharge = PROBLEM_SURCHARGE[input.problemType] ?? 0;
+  const billableKm = input.driverDistanceKm + (input.towDistanceKm ?? 0);
+  const distance = Math.round(billableKm * PER_KM * 100) / 100;
+  const base = Math.round(BASE_FARE * 100) / 100;
+  const total = Math.round((base + distance + surcharge) * 100) / 100;
+  return { base, distance, surcharge, total };
+}
+
 // Postgres `numeric` columns (used for price_estimate — money is never stored
 // as float) come back from PostgREST as JSON strings to avoid precision loss.
 // Every display/arithmetic site must parse through this before using the

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { distanceKm, estimateEtaMinutes, estimatePrice, toMoney } from './pricing';
+import { distanceKm, estimateEtaMinutes, estimatePrice, estimatePriceBreakdown, toMoney } from './pricing';
 
 describe('estimatePrice', () => {
   it('applies the base fare plus per-km rate with no surcharge', () => {
@@ -23,6 +23,34 @@ describe('estimatePrice', () => {
 
   it('never returns a negative price for zero distance', () => {
     expect(estimatePrice(0, 'battery')).toBeGreaterThan(0);
+  });
+});
+
+describe('estimatePriceBreakdown', () => {
+  it('matches estimatePrice() when there is no tow distance (on-site service)', () => {
+    const breakdown = estimatePriceBreakdown({ driverDistanceKm: 10, problemType: 'battery' });
+    expect(breakdown.total).toBeCloseTo(estimatePrice(10, 'battery'), 2);
+    expect(breakdown.base).toBeCloseTo(45, 2);
+    expect(breakdown.distance).toBeCloseTo(22.5, 2);
+    expect(breakdown.surcharge).toBe(0);
+  });
+
+  it('bills the tow distance (pickup -> destination) in addition to the approach distance', () => {
+    // base 45 + (5km approach + 20km tow) * 2.25 + 30 (accident) = 131.25
+    const breakdown = estimatePriceBreakdown({ driverDistanceKm: 5, towDistanceKm: 20, problemType: 'accident' });
+    expect(breakdown.total).toBeCloseTo(131.25, 2);
+    expect(breakdown.distance).toBeCloseTo(56.25, 2);
+    expect(breakdown.surcharge).toBe(30);
+  });
+
+  it('the breakdown always sums to the total (transparent line items)', () => {
+    const breakdown = estimatePriceBreakdown({ driverDistanceKm: 7.4, towDistanceKm: 12.1, problemType: 'mechanical' });
+    expect(breakdown.base + breakdown.distance + breakdown.surcharge).toBeCloseTo(breakdown.total, 2);
+  });
+
+  it('treats a missing tow distance as zero, not a crash or NaN', () => {
+    const breakdown = estimatePriceBreakdown({ driverDistanceKm: 8, problemType: 'lockout' });
+    expect(Number.isFinite(breakdown.total)).toBe(true);
   });
 });
 

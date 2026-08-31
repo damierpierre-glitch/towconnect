@@ -1,0 +1,13 @@
+-- TowConnect — Phase 3: adds the one additional request status the driver
+-- action list actually needs — "intervention en cours", between arriving on
+-- site and completing the job. Everything else in the pipeline
+-- (pending/matched/en_route/arrived/completed/cancelled/expired) already
+-- covers a real, distinct step, so nothing else is added here.
+--
+-- Kept in its own tiny migration, deliberately not used anywhere else in
+-- this same file: Postgres cannot use a brand-new enum value in a statement
+-- that runs before the ADD VALUE itself commits (same constraint already
+-- documented in 0002_hardening.sql for 'expired'). The transition-guard
+-- trigger that references 'in_progress' lives in 0010, its own migration,
+-- applied afterward.
+alter type request_status add value if not exists 'in_progress' after 'arrived';
