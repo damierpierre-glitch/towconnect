@@ -167,24 +167,31 @@ async function main() {
       `amount_capturable_updated rows in ledger=${count ?? 0}`
     );
 
-    // A card that demands 3D Secure. Stripe reports this as
-    // payment_intent.payment_failed with last_payment_error.code =
-    // 'authentication_required' - which the webhook used to record as a flat
-    // 'failed', overwriting the 'requires_action' the app had just written
-    // correctly and telling the rider their payment had died while the
-    // challenge was still on their screen. Asserted remotely because only the
-    // deployed route can prove it.
+    // A card that demands 3D Secure, confirmed off-session exactly the way
+    // createRequest() confirms a saved card. Stripe answers with a card error
+    // whose code is 'authentication_required' and fires
+    // payment_intent.payment_failed - which the webhook used to record as a
+    // flat 'failed', overwriting the 'requires_action' the app had just
+    // written correctly, and telling the rider their payment had died while
+    // the challenge was still on their screen. Only the deployed route can
+    // prove this, so it is asserted here.
+    const scaCustomer = await stripe.customers.create({ metadata: { towconnect_purpose: 'sca webhook verification' } });
+    const scaMethod = await stripe.paymentMethods.create({ type: 'card', card: { token: 'tok_threeDSecure2Required' } });
+    await stripe.paymentMethods.attach(scaMethod.id, { customer: scaCustomer.id });
+
     const scaIntent = await stripe.paymentIntents.create({
       amount: 4596,
       currency: 'cad',
       capture_method: 'manual',
-      customer: (await stripe.customers.create({ metadata: { towconnect_purpose: 'sca webhook verification' } })).id,
-      payment_method: (await stripe.paymentMethods.create({ type: 'card', card: { token: 'tok_threeDSecure2Required' } })).id,
+      customer: scaCustomer.id,
+      payment_method: scaMethod.id,
       automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
       metadata: { towconnect_purpose: 'sca webhook verification' },
     });
     scaIntentId = scaIntent.id;
 
+    // Recorded first, as 'requires_action' - what the app writes when it sees
+    // the challenge. The assertion is that the webhook does NOT overwrite it.
     const { error: scaPaymentError } = await admin.from('payments').insert({
       request_id: requestId,
       stripe_payment_intent_id: scaIntent.id,
@@ -194,25 +201,31 @@ async function main() {
     });
     if (scaPaymentError) throw new Error(`setup: could not record SCA payment: ${scaPaymentError.message}`);
 
-    await stripe.paymentIntents.confirm(scaIntent.id).catch(() => {});
-
-    // Give the delivery time to land, then assert it did NOT become 'failed'.
-    const scaSettled = await waitFor(
-      'the SCA webhook',
-      async () => {
-        const { count } = await admin
-          .from('stripe_webhook_events')
-          .select('stripe_event_id', { count: 'exact', head: true })
-          .eq('type', 'payment_intent.payment_failed');
-        return (count ?? 0) > scaFailedEventsBefore;
-      },
-      90_000
+    let scaCode: string | null = null;
+    try {
+      await stripe.paymentIntents.confirm(scaIntent.id, { off_session: true });
+    } catch (err) {
+      scaCode = err instanceof Stripe.errors.StripeCardError ? (err.code ?? null) : null;
+      if (scaCode == null) throw err;
+    }
+    check(
+      'the SCA fixture really produced an authentication_required decline',
+      scaCode === 'authentication_required',
+      `code=${scaCode}`
     );
+
+    const scaDelivered = await waitFor('the SCA webhook', async () => {
+      const { count } = await admin
+        .from('stripe_webhook_events')
+        .select('stripe_event_id', { count: 'exact', head: true })
+        .eq('type', 'payment_intent.payment_failed');
+      return (count ?? 0) > scaFailedEventsBefore;
+    });
     const scaStatus = await paymentStatus(scaIntent.id);
     check(
       'an SCA challenge is recorded as requires_action, never as failed',
-      scaSettled && scaStatus === 'requires_action',
-      `delivered=${scaSettled} status=${scaStatus}`
+      scaDelivered && scaStatus === 'requires_action',
+      `delivered=${scaDelivered} status=${scaStatus}`
     );
 
     // Release the hold. This also exercises a second event type over the same

@@ -15,6 +15,7 @@ import { config as loadEnv } from 'dotenv';
 loadEnv({ path: '.env.local' });
 loadEnv();
 import { createClient } from '@supabase/supabase-js';
+import Stripe from 'stripe';
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -29,6 +30,12 @@ if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
+
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+const stripe =
+  STRIPE_SECRET_KEY && (STRIPE_SECRET_KEY.startsWith('sk_test_') || STRIPE_SECRET_KEY.startsWith('rk_test_'))
+    ? new Stripe(STRIPE_SECRET_KEY)
+    : null;
 
 const STATE_PATH = join(dirname(fileURLToPath(import.meta.url)), '.e2e-fixtures.json');
 const PASSWORD = 'E2ePass!2026';
@@ -112,6 +119,24 @@ async function down() {
     .select('id')
     .in('user_id', [state.riderId]);
   for (const r of requests ?? []) {
+    // Release any hold or half-finished authorization before the row that
+    // records it disappears - otherwise the only trace of a live PaymentIntent
+    // is gone and it sits on the card until Stripe expires it.
+    const { data: payments } = await admin
+      .from('payments')
+      .select('stripe_payment_intent_id')
+      .eq('request_id', r.id);
+    for (const payment of payments ?? []) {
+      const intentId = payment.stripe_payment_intent_id as string | null;
+      if (!intentId || !stripe) continue;
+      const intent = await stripe.paymentIntents.retrieve(intentId).catch(() => null);
+      const open = ['requires_payment_method', 'requires_confirmation', 'requires_action', 'requires_capture'];
+      if (intent && open.includes(intent.status)) {
+        await stripe.paymentIntents.cancel(intentId).catch(() => {});
+        console.log(`cancelled ${intentId} (was ${intent.status})`);
+      }
+    }
+
     await admin.from('messages').delete().eq('request_id', r.id);
     await admin.from('dispatch_offers').delete().eq('request_id', r.id);
     await admin.from('payments').delete().eq('request_id', r.id);
