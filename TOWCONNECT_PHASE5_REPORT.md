@@ -186,7 +186,7 @@ Toutes additives, appliquées et vérifiées en base une par une (existence de t
 
 1. **`service_types` n'affecte pas le dispatch** — capturé et affiché, jamais lu par le matching. Décision délibérée (voir §1), pas un oubli.
 2. **`expires_at` sur un document n'est pas appliqué côté serveur** — affichage seul, aucun job planifié. Construire ce job touche le scheduler/Edge Functions, hors périmètre.
-3. **Un chauffeur offert (avant acceptation) peut techniquement lire le profil complet du client via l'API** — la policy RLS qui le permet est une fondation pré-Phase-5 partagée avec toute la messagerie post-matching ; l'interface ne l'expose jamais, mais la policy elle-même n'a pas été resserrée. Trouvé, documenté, non corrigé — voir §5.
+3. ~~**Un chauffeur offert (avant acceptation) peut techniquement lire le profil complet du client via l'API**~~ — ✅ **corrigé en Phase 5.1**, voir §17. La fuite a été reproduite en conditions réelles puis fermée par la migration `0022`.
 4. **Pas de dashboard Business** — seulement la préparation de schéma (§11), comme demandé explicitement.
 5. **Rotation du token Mapbox restreinte par URL** — toujours non fait (hérité de la Phase 4.5, hors périmètre de celle-ci).
 
@@ -195,7 +195,105 @@ Toutes additives, appliquées et vérifiées en base une par une (existence de t
 Dans l'ordre où elles bloquent le moins de choses :
 
 1. **Décider du taux de commission** — c'est la dépendance qui débloque des revenus/reçus chauffeur *réels* plutôt qu'un prix brut avec une note explicative.
-2. **Resserrer la policy `profiles: request participants read each other`** pour distinguer une offre en attente d'un matching confirmé (limitation §15.3) — un vrai correctif de sécurité, pas une nouvelle fonctionnalité.
+2. ~~**Resserrer la policy `profiles: request participants read each other`**~~ — ✅ **fait en Phase 5.1** (§17).
 3. **Dashboard Business** au-dessus de `companies`/`company_id` (déjà préparés) — plusieurs chauffeurs, une flotte, un propriétaire.
 4. **Stripe Connect / payouts** une fois la commission décidée.
 5. Un job planifié pour faire respecter `driver_documents.expires_at` server-side, si l'expiration doit un jour bloquer l'approbation plutôt que rester informative.
+
+---
+
+## 17. Phase 5.1 — Profile Privacy Hardening
+
+Date : 2026-09-01. Correctif de la limitation §15.3, identifiée en rédigeant ce rapport.
+
+### La fuite, mesurée avant d'être corrigée
+
+La policy `profiles: request participants read each other` (0001) accordait une lecture mutuelle des profils dès que `requests.driver_id` pointait sur le chauffeur. Elle a été écrite quand `driver_id` n'était posé qu'à l'acceptation. **Smart Dispatch (0006) a changé ce timing sous elle** : `dispatch_next_candidate_core()` écrit `requests.driver_id` au moment de **l'offre**, alors que le statut est encore `pending`.
+
+Reproduit contre le projet réel, avec de vraies sessions, **avant** tout correctif :
+
+```
+after offer -> status: pending | driver_id set: true
+OFFERED driver reads rider profile   : LEAK -> {"full_name":"…","phone":"514-555-0142"}
+rider reads OFFERED driver profile   : LEAK -> {"full_name":"…"}
+UNASSIGNED driver reads rider profile: blocked (null)
+```
+
+Un chauffeur simplement **offert** lisait donc le **nom et le numéro de téléphone** du client avant d'accepter, et gardait cet accès pendant toute la fenêtre de 18 s même s'il refusait. La fuite était **symétrique** : le client lisait aussi le profil d'un chauffeur qui n'avait encore rien accepté. L'interface ne l'a jamais affiché — c'est la base qui l'autorisait, et c'est ce qui compte.
+
+### Pourquoi `status <> 'pending'` n'aurait pas suffi
+
+`driver_id` survit délibérément à l'étape d'offre sur deux chemins qui n'ont jamais atteint l'acceptation :
+
+- `expire_offer_on_cancel()` (0006) laisse explicitement `driver_id` en place quand le client annule ;
+- `cleanup_stale()` (0002) passe une course `pending` périmée à `expired` sans y toucher non plus.
+
+Un chauffeur ayant seulement reçu une offre aurait donc **gagné** l'accès au profil du client au moment où cette course expirait ou était annulée. Filtrer sur le statut déplaçait la fuite au lieu de la fermer. Ces deux cas sont maintenant des assertions à part entière.
+
+### Le correctif — `0022_profile_privacy_after_matching.sql`
+
+Le seul fait qui sépare « on m'a proposé cette course » de « j'ai pris cette course » est de savoir si elle a **réellement atteint `matched`**. `request_events` enregistre exactement ça, via `log_request_status_change()` — un trigger sur `requests` lui-même, donc il capture *tous* les chemins vers `matched` (`respond_to_dispatch_offer`, un appel direct à `accept_request()`, une assignation admin) plutôt que de faire confiance à une seule fonction pour avoir bien tenu ses comptes. Étant append-only, la preuve survit à la course qui passe en `completed`, ou qui est annulée alors que le chauffeur était déjà dessus — c'est ce qui garde le reçu et l'historique chauffeur fonctionnels.
+
+```sql
+and exists (
+  select 1 from request_events e
+  where e.request_id = r.id and e.status = 'matched'
+)
+```
+
+`request_events` n'avait **aucun index** ; la policy ajoutant un EXISTS dessus à chaque lecture de `profiles`, l'index `(request_id, status)` est créé dans la même migration.
+
+**Aucun code applicatif n'a changé.** La base est l'application de la règle, pas le frontend — le tableau de bord chauffeur ne récupérait déjà l'identité du client que pour une mission `matched` ou plus.
+
+### Vérifié après correctif — même probe, mêmes sessions
+
+```
+OFFERED driver reads rider profile   : blocked (null)
+rider reads OFFERED driver profile   : blocked (null)
+MATCHED driver reads rider profile   : allowed -> {"full_name":"…","phone":"…"}
+rider reads MATCHED driver profile   : allowed
+```
+
+### Tests RLS : 92 → 107
+
+Les 92 assertions existantes restent vertes ; 15 s'ajoutent :
+
+| Assertion | Résultat |
+|---|---|
+| offre en attente → le chauffeur ne lit pas le profil client | ✅ |
+| chauffeur sans lien → ne lit jamais le profil client | ✅ |
+| client → ne lit pas le profil d'un chauffeur seulement *offert* | ✅ |
+| acceptation → le profil client devient lisible | ✅ |
+| après matching → le client lit son chauffeur assigné (tracking) | ✅ |
+| chat après matching toujours fonctionnel | ✅ |
+| après complétion → le client lit le chauffeur (reçu) | ✅ |
+| après complétion → le chauffeur lit le client (historique) | ✅ |
+| refus d'offre → aucune lecture | ✅ |
+| course **expirée** gardant `driver_id` → aucune lecture | ✅ |
+| client → ne lit pas un chauffeur jamais matché | ✅ |
+| admin conserve l'accès à tous les profils | ✅ |
+| + 3 assertions de *setup* garantissant que les cas ci-dessus ne passent pas à vide | ✅ |
+
+Ces trois dernières comptent. **Deux de mes nouvelles assertions ont d'abord échoué**, et la policy n'y était pour rien : je réutilisais le même couple chauffeur/client qui venait de **terminer** une course ensemble, ce qui accorde légitimement et définitivement la lecture. Le test observait donc la course terminée, pas le refus. Corrigé avec des clients neufs, plus un garde-fou explicite (« l'offre a-t-elle réellement été émise ? ») pour qu'un « ne peut pas lire » ne puisse jamais passer simplement parce que rien ne s'est produit.
+
+### Test manuel — API directe, pas seulement l'interface
+
+Sur un serveur réel, avec la session authentifiée du chauffeur offert :
+
+```
+AVANT ACCEPTATION
+  request visible to driver : status=pending pickup="1000 Rue Sainte-Catherine O." dest="2000 Rue Notre-Dame O." price=49.5
+  rider PROFILE via direct API: BLOCKED (null)
+
+APRÈS ACCEPTATION
+  request visible to driver : status=matched …
+  rider PROFILE via direct API: READABLE -> {"full_name":"P51 Rider","phone":"514-555-0163"}
+```
+
+La carte d'offre affiche bien type de service, véhicule, ramassage, destination, distances, ETA et montant — **et aucun nom ni téléphone**. La fiche client n'apparaît qu'après acceptation.
+
+### Régressions
+
+Aucune. Dispatch, offre, acceptation/refus, mission après matching, chat, appel client, tracking, historique, reçu et admin : tous couverts par des assertions dédiées, tous verts.
+
+Une bizarrerie **préexistante** subsiste, non introduite par ce correctif : `driver_id` survivant à une annulation, une course annulée alors que le chauffeur n'avait qu'une offre apparaît toujours dans son historique. Depuis 5.1 elle s'y affiche sans nom de client — ce qui est le bon comportement côté confidentialité (`JobDetail` omet simplement la ligne). Non corrigé : hors périmètre, et sans exposition nouvelle.

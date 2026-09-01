@@ -1639,6 +1639,255 @@ async function run(): Promise<Result[]> {
         detail: unapprovedQuoted ? 'unapproved driver was returned and would have priced/dispatched the quote' : undefined,
       });
     }
+
+    // ================================================================
+    // Phase 5.1 — profile privacy (0022_profile_privacy_after_matching.sql)
+    //
+    // Smart Dispatch sets requests.driver_id when it makes the OFFER, while
+    // status is still 'pending'. The original participants policy keyed on
+    // driver_id alone, so a driver who had merely been offered a job could
+    // read the rider's name and phone before accepting — and a rider could
+    // read an offered driver's profile just as early.
+    //
+    // The replacement keys on "this request ever reached 'matched'"
+    // (request_events). These assertions pin both halves: the pre-acceptance
+    // paths stay closed, and every post-matching read the product actually
+    // depends on keeps working.
+    // ================================================================
+    await retirePreviousDrivers();
+    {
+      const rider = await createTestUser('user');
+      createdUserIds.push(rider.id);
+      await admin.from('profiles').update({ phone: '514-555-0177' }).eq('id', rider.id);
+
+      const driverA = await makeApprovedDriver({ ...MTL });
+      const driverB = await createTestUser('driver');
+      createdUserIds.push(driverB.id);
+
+      const readRiderAs = async (as: TestUser) => {
+        const { data } = await as.client.from('profiles').select('full_name, phone').eq('id', rider.id).maybeSingle();
+        return data;
+      };
+
+      // ---- an outstanding offer is NOT an assignment ----
+      const offeredRequestId = await insertPendingRequest(rider, MTL);
+      await rider.client.rpc('dispatch_next_candidate', { p_request_id: offeredRequestId });
+      const { data: offeredRow } = await admin
+        .from('requests')
+        .select('status, driver_id')
+        .eq('id', offeredRequestId)
+        .single();
+      results.push({
+        name: 'setup: an outstanding offer sets driver_id while status is still pending',
+        pass: offeredRow?.status === 'pending' && offeredRow?.driver_id === driverA.id,
+        detail: `status='${offeredRow?.status}', driver_id points at the offered driver=${offeredRow?.driver_id === driverA.id}`,
+      });
+
+      const offeredRead = await readRiderAs(driverA);
+      results.push({
+        name: 'a driver holding only a pending offer cannot read the rider profile',
+        pass: offeredRead == null,
+        detail: offeredRead ? `leaked ${JSON.stringify(offeredRead)}` : undefined,
+      });
+
+      const strangerRead = await readRiderAs(driverB);
+      results.push({
+        name: 'a driver with no relationship to the request never reads the rider profile',
+        pass: strangerRead == null,
+        detail: strangerRead ? `leaked ${JSON.stringify(strangerRead)}` : undefined,
+      });
+
+      // The leak was symmetric — the rider could read an offered driver's
+      // profile row before that driver had agreed to anything.
+      const { data: riderReadsOfferedDriver } = await rider.client
+        .from('profiles')
+        .select('full_name')
+        .eq('id', driverA.id)
+        .maybeSingle();
+      results.push({
+        name: 'a rider cannot read the profile of a driver who has only been offered their job',
+        pass: riderReadsOfferedDriver == null,
+        detail: riderReadsOfferedDriver ? `leaked ${JSON.stringify(riderReadsOfferedDriver)}` : undefined,
+      });
+
+      // ---- accepting is what opens it ----
+      const { error: acceptError } = await driverA.client.rpc('respond_to_dispatch_offer', {
+        p_request_id: offeredRequestId,
+        p_accept: true,
+      });
+      const matchedRead = await readRiderAs(driverA);
+      results.push({
+        name: 'once the driver accepts and becomes requests.driver_id, the rider profile is readable',
+        pass: !acceptError && matchedRead?.full_name != null,
+        detail: acceptError?.message ?? (matchedRead ? undefined : 'still blocked after matching — regression'),
+      });
+
+      const { data: riderReadsMatchedDriver } = await rider.client
+        .from('profiles')
+        .select('full_name')
+        .eq('id', driverA.id)
+        .maybeSingle();
+      results.push({
+        name: 'after matching, the rider can read their assigned driver profile (tracking screen)',
+        pass: riderReadsMatchedDriver?.full_name != null,
+        detail: riderReadsMatchedDriver ? undefined : 'blocked after matching — regression',
+      });
+
+      // Chat is governed by its own policies and must be unaffected.
+      const { error: driverMsgError } = await driverA.client
+        .from('messages')
+        .insert({ request_id: offeredRequestId, sender_id: driverA.id, template_key: 'on_my_way' });
+      const { data: riderSeesMsg } = await rider.client
+        .from('messages')
+        .select('id')
+        .eq('request_id', offeredRequestId);
+      results.push({
+        name: 'chat still works after matching (unaffected by the profiles policy change)',
+        pass: !driverMsgError && (riderSeesMsg ?? []).length === 1,
+        detail: driverMsgError?.message ?? `rider sees ${riderSeesMsg?.length ?? 0} message(s), expected 1`,
+      });
+
+      // A completed job must stay readable — the rider's receipt names the
+      // driver, and the driver's history names the client.
+      for (const next of ['en_route', 'arrived', 'in_progress', 'completed'] as const) {
+        await driverA.client.from('requests').update({ status: next }).eq('id', offeredRequestId);
+      }
+      const { data: completedRow } = await admin.from('requests').select('status').eq('id', offeredRequestId).single();
+      const { data: riderReadsDriverAfterCompletion } = await rider.client
+        .from('profiles')
+        .select('full_name')
+        .eq('id', driverA.id)
+        .maybeSingle();
+      results.push({
+        name: 'after completion, the rider can still read the driver profile (receipt)',
+        pass: completedRow?.status === 'completed' && riderReadsDriverAfterCompletion?.full_name != null,
+        detail: completedRow?.status !== 'completed'
+          ? `request is '${completedRow?.status}', expected 'completed'`
+          : riderReadsDriverAfterCompletion
+            ? undefined
+            : 'blocked on a completed job — receipt regression',
+      });
+      results.push({
+        name: 'after completion, the driver can still read the client profile (driver history)',
+        pass: (await readRiderAs(driverA))?.full_name != null,
+        detail: 'blocked on a completed job — driver history regression',
+      });
+
+      // ---- declining closes it again ----
+      //
+      // A FRESH rider, deliberately. driverA and the rider above now share a
+      // COMPLETED job, which legitimately and permanently grants that read —
+      // reusing the pair here would prove nothing about declining, it would
+      // just re-observe the completed job. (Written the reusing way first;
+      // the suite caught it.)
+      //
+      // The heartbeat is also refreshed before each dispatch below: several
+      // minutes of test time have passed since makeApprovedDriver(), and a
+      // stale driver is not a dispatch candidate — without this the offer is
+      // never made and the "cannot read" assertion passes vacuously. The
+      // setup assertions guard exactly that.
+      const declineRider = await createTestUser('user');
+      createdUserIds.push(declineRider.id);
+      await admin.from('driver_profiles')
+        .update({ is_online: true, last_heartbeat_at: new Date().toISOString() })
+        .eq('profile_id', driverA.id);
+
+      const declinedRequestId = await insertPendingRequest(declineRider, MTL);
+      const { data: declineOffer } = await declineRider.client.rpc('dispatch_next_candidate', {
+        p_request_id: declinedRequestId,
+      });
+      results.push({
+        name: 'setup: the decline case really produced an offer to this driver',
+        pass: !noOfferMade(declineOffer),
+        detail: 'no offer was made, so the decline assertion below would pass vacuously',
+      });
+
+      await driverA.client.rpc('respond_to_dispatch_offer', { p_request_id: declinedRequestId, p_accept: false });
+      const { data: declinedRead } = await driverA.client
+        .from('profiles')
+        .select('full_name, phone')
+        .eq('id', declineRider.id)
+        .maybeSingle();
+      results.push({
+        name: 'a driver who declined an offer cannot read that rider profile',
+        pass: declinedRead == null,
+        detail: declinedRead ? `leaked ${JSON.stringify(declinedRead)}` : undefined,
+      });
+
+      // ---- an expired request keeps its driver_id: the case a naive
+      //      "status <> 'pending'" fix would have missed entirely ----
+      const expiredRider = await createTestUser('user');
+      createdUserIds.push(expiredRider.id);
+      await admin.from('driver_profiles')
+        .update({ is_online: true, last_heartbeat_at: new Date().toISOString() })
+        .eq('profile_id', driverA.id);
+
+      const expiredRequestId = await insertPendingRequest(expiredRider, MTL);
+      const { data: expiredOffer } = await expiredRider.client.rpc('dispatch_next_candidate', {
+        p_request_id: expiredRequestId,
+      });
+      results.push({
+        name: 'setup: the expiry case really produced an offer to this driver',
+        pass: !noOfferMade(expiredOffer),
+        detail: 'no offer was made, so the expiry assertion below would pass vacuously',
+      });
+
+      // Exactly what cleanup_stale() does: flip the status, leave driver_id.
+      await admin.from('requests').update({ status: 'expired' }).eq('id', expiredRequestId);
+      const { data: expiredRow } = await admin
+        .from('requests')
+        .select('status, driver_id')
+        .eq('id', expiredRequestId)
+        .single();
+      const { data: expiredRead } = await driverA.client
+        .from('profiles')
+        .select('full_name, phone')
+        .eq('id', expiredRider.id)
+        .maybeSingle();
+      results.push({
+        name: 'an expired request that never matched does not leak the rider profile, despite keeping driver_id',
+        pass: expiredRow?.driver_id != null && expiredRead == null,
+        detail: expiredRow?.driver_id == null
+          ? 'driver_id was cleared, so this case never exercised the policy'
+          : expiredRead
+            ? `leaked ${JSON.stringify(expiredRead)}`
+            : undefined,
+      });
+
+      // ---- a rider cannot browse arbitrary driver profiles ----
+      const { data: riderReadsUnrelatedDriver } = await rider.client
+        .from('profiles')
+        .select('full_name')
+        .eq('id', driverB.id)
+        .maybeSingle();
+      results.push({
+        name: 'a rider cannot read the profile of a driver they were never matched with',
+        pass: riderReadsUnrelatedDriver == null,
+        detail: riderReadsUnrelatedDriver ? `leaked ${JSON.stringify(riderReadsUnrelatedDriver)}` : undefined,
+      });
+
+      // ---- admin keeps the access support depends on ----
+      const adminUser = await createTestUser('user');
+      createdUserIds.push(adminUser.id);
+      await admin.from('profiles').update({ role: 'admin' }).eq('id', adminUser.id);
+      const { data: adminReadsRider } = await adminUser.client
+        .from('profiles')
+        .select('full_name')
+        .eq('id', rider.id)
+        .maybeSingle();
+      const { data: adminReadsDriver } = await adminUser.client
+        .from('profiles')
+        .select('full_name')
+        .eq('id', driverA.id)
+        .maybeSingle();
+      results.push({
+        name: 'an admin still reads any profile, matched or not',
+        pass: adminReadsRider?.full_name != null && adminReadsDriver?.full_name != null,
+        detail: 'admin lost profile access — regression',
+      });
+
+      await admin.from('requests').delete().in('id', [declinedRequestId, expiredRequestId]);
+    }
   } finally {
     for (const id of createdUserIds) {
       await deleteTestUser(id);
