@@ -1,9 +1,10 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Syne, DM_Sans } from 'next/font/google';
 import './globals.css';
 import { LanguageProvider } from '@/lib/i18n/LanguageProvider';
 import { ToastProvider } from '@/components/ToastProvider';
 import { NavBar } from '@/components/NavBar';
+import { SiteFooter } from '@/components/SiteFooter';
 import { createClient } from '@/lib/supabase/server';
 
 const syne = Syne({
@@ -18,10 +19,25 @@ const dmSans = DM_Sans({
   weight: ['300', '400', '500', '600'],
 });
 
+// The previous copy here promised the whole country. The launch area is
+// Montréal and the South Shore, and the metadata is the first thing a search
+// engine or a link preview quotes back at people — so it says that instead.
 export const metadata: Metadata = {
-  title: 'TowConnect — Remorquage instantané au Canada',
+  title: 'TowConnect — Remorquage à la demande | Montréal & Rive-Sud',
   description:
-    'TowConnect connecte les automobilistes en panne au remorqueur le plus proche, avec prix transparent, partout au Canada.',
+    'TowConnect vous connecte rapidement à un remorqueur disponible dans la région de Montréal et la Rive-Sud, avec un prix affiché avant confirmation et un suivi en direct.',
+  openGraph: {
+    title: 'TowConnect — Remorquage à la demande',
+    description:
+      'Un remorqueur disponible à Montréal et sur la Rive-Sud, prix affiché avant confirmation, suivi en direct.',
+    siteName: 'TowConnect',
+    locale: 'fr_CA',
+    type: 'website',
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: '#0d0d0d',
 };
 
 export default async function RootLayout({ children }: LayoutProps<'/'>) {
@@ -47,6 +63,9 @@ export default async function RootLayout({ children }: LayoutProps<'/'>) {
           <ToastProvider>
             <NavBar role={role} />
             <main className="flex-1">{children}</main>
+            {/* Marketing chrome, so it stops at the signed-in surfaces: a
+                driver mid-mission does not need a footer under the map. */}
+            {role === null ? <SiteFooter /> : null}
           </ToastProvider>
         </LanguageProvider>
       </body>

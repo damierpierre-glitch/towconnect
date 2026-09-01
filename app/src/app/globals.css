@@ -71,3 +71,101 @@ h4 {
 .mapboxgl-ctrl-logo {
   opacity: 0.6;
 }
+
+/* ------------------------------------------------------------------
+   Brand refresh — premium dark surface treatments.
+
+   These are the only new visual primitives; everything else in the app
+   keeps using the existing night/steel/orange tokens above, so nothing
+   outside the marketing surfaces changes appearance.
+   ------------------------------------------------------------------ */
+
+::selection {
+  background: rgba(255, 92, 26, 0.28);
+  color: var(--color-white);
+}
+
+/* One consistent, visible focus ring instead of the browser default on a
+   near-black background, where the default is close to invisible. */
+:where(a, button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--color-orange);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* Warm ambient light behind the hero. Kept low-opacity on purpose: a glow
+   you can point at is a gradient, a glow you can't is atmosphere. */
+.brand-aura {
+  background:
+    radial-gradient(60rem 32rem at 50% -14%, rgba(255, 92, 26, 0.16), transparent 68%),
+    radial-gradient(36rem 24rem at 88% 6%, rgba(255, 92, 26, 0.06), transparent 70%);
+}
+
+/* Faint engineering grid, faded out at the edges so it never reads as a
+   texture tile. */
+.brand-grid::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: radial-gradient(70% 55% at 50% 0%, #000 0%, transparent 78%);
+  -webkit-mask-image: radial-gradient(70% 55% at 50% 0%, #000 0%, transparent 78%);
+}
+
+/* A 1px top edge that catches the light, the way a physical panel would. */
+.hairline-top {
+  position: relative;
+}
+.hairline-top::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 8%;
+  right: 8%;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(255, 255, 255, 0.16),
+    transparent
+  );
+}
+
+/* Elevated card surface: slightly lifted gradient + an orange edge that only
+   appears on hover, so a grid of them stays calm at rest. */
+.surface-card {
+  background: linear-gradient(180deg, var(--color-night-2) 0%, #121212 100%);
+  border: 1px solid var(--color-night-4);
+  transition:
+    border-color 0.25s ease,
+    transform 0.25s ease,
+    box-shadow 0.25s ease;
+}
+.surface-card:hover {
+  border-color: rgba(255, 92, 26, 0.4);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px -18px rgba(255, 92, 26, 0.55);
+}
+
+/* The primary CTA carries the only strong glow on the page. */
+.cta-glow {
+  box-shadow:
+    0 0 0 1px rgba(255, 138, 92, 0.35) inset,
+    0 10px 30px -12px rgba(255, 92, 26, 0.75);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .surface-card {
+    transition: none;
+  }
+  .surface-card:hover {
+    transform: none;
+  }
+  .map-pulse {
+    animation: none;
+  }
+}

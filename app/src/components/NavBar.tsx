@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
 import { signOut } from '@/lib/actions/auth';
+import { BrandMark } from './BrandMark';
 import type { UserRole } from '@/lib/supabase/types';
 
 interface NavBarProps {
@@ -51,15 +52,13 @@ export function NavBar({ role }: NavBarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <nav className="bg-night-2 border-b border-steel sticky top-0 z-[100]">
-      <div className="flex items-center justify-between px-4 sm:px-7 py-4">
-        <Link href="/" className="flex items-center gap-2.5">
-          <div className="w-9 h-9 bg-orange rounded-lg flex items-center justify-center text-lg">
-            🚛
-          </div>
-          <div className="font-display font-extrabold text-lg">
-            Tow<span className="text-orange">Connect</span>
-          </div>
+    <nav className="sticky top-0 z-[100] border-b border-night-4 bg-night/85 backdrop-blur-xl supports-[backdrop-filter]:bg-night/70">
+      <div className="flex items-center justify-between gap-2 sm:gap-3 px-3.5 sm:px-7 py-3.5">
+        {/* The mark used to be a 🚛 emoji in an orange tile — a different
+            drawing on every OS, and a stand-in logo the brand never chose.
+            BrandMark is the single place the real asset gets installed. */}
+        <Link href="/" className="flex items-center shrink-0" aria-label="TowConnect">
+          <BrandMark size="sm" />
         </Link>
 
         <div className="hidden md:flex items-center gap-1">
@@ -88,12 +87,16 @@ export function NavBar({ role }: NavBarProps) {
           ))}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
           <button
             onClick={toggleLang}
-            className="px-3.5 py-1.5 rounded-lg border border-steel text-text-2 text-sm hover:border-orange hover:text-orange transition-colors"
+            className="px-2 sm:px-3.5 py-1.5 rounded-lg border border-night-4 text-text-2 text-sm whitespace-nowrap hover:border-orange hover:text-orange transition-colors"
           >
-            🌐 {lang === 'fr' ? 'EN' : 'FR'}
+            {/* Syne is a wide face — the wordmark alone is ~10x its font size.
+                Below 360px the globe is the first thing that has to go for the
+                bar to stay on one line. */}
+            <span className="hidden min-[360px]:inline">🌐 </span>
+            {lang === 'fr' ? 'EN' : 'FR'}
           </button>
           {role ? (
             <>
@@ -118,12 +121,18 @@ export function NavBar({ role }: NavBarProps) {
             </>
           ) : (
             <>
-              <Link href="/login" className="text-sm text-text-2 hover:text-orange">
+              {/* Hidden below 380px only: at that width the logo, the language
+                  toggle and two auth actions cannot all sit on one line, and
+                  the signup button is the one worth keeping. */}
+              <Link
+                href="/login"
+                className="hidden min-[380px]:inline text-sm text-text-2 hover:text-orange transition-colors"
+              >
                 {t('nav_login')}
               </Link>
               <Link
                 href="/signup"
-                className="px-4 py-2 rounded-lg bg-orange text-white text-sm font-semibold"
+                className="px-2.5 min-[360px]:px-3 sm:px-4 py-2 rounded-lg bg-orange text-white text-sm font-semibold whitespace-nowrap hover:bg-orange-dark transition-colors"
               >
                 {t('nav_signup')}
               </Link>

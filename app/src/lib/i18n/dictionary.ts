@@ -13,11 +13,33 @@ export const dictionary = {
     hero_title_2: 'de la',
     hero_title_3: 'route?',
     hero_sub:
-      'TowConnect vous connecte instantanément au remorqueur le plus proche, avec un prix affiché avant de confirmer. Couverture Canada entier — 24/7.',
-    badge_canada: '🇨🇦 Tout le Canada',
-    badge_fast: '⚡ Réponse rapide',
-    badge_safe: '🔒 Prix transparent',
+      'TowConnect vous connecte rapidement à un remorqueur disponible dans la région de Montréal et la Rive-Sud, avec un prix affiché avant confirmation et un suivi en direct.',
+    // Renamed from badge_canada: the service launches on the South Shore and
+    // the island, and the copy has to say so rather than imply a country.
+    badge_area: 'Montréal & Rive-Sud',
+    badge_fast: 'Réponse rapide',
+    badge_safe: 'Prix transparent',
     btn_emergency: "Demander de l'aide",
+
+    hero_eyebrow: 'Assistance routière à la demande',
+    home_how_title: 'Comment ça marche',
+    home_step1_title: 'Dites-nous où vous êtes',
+    home_step1_sub: 'Décrivez la panne, votre position et votre véhicule.',
+    home_step2_title: 'Voyez le prix avant de confirmer',
+    home_step2_sub: "Le montant estimé s'affiche avant tout engagement de votre part.",
+    home_step3_title: "Suivez l'arrivée en direct",
+    home_step3_sub: 'Un remorqueur disponible est assigné, puis suivi sur la carte.',
+
+    home_cta_title: "Besoin d'un remorqueur maintenant?",
+    home_cta_sub: "Prix affiché avant confirmation, suivi en direct jusqu'à l'arrivée.",
+    home_driver_title: 'Vous êtes remorqueur?',
+    home_driver_sub:
+      'Recevez des demandes près de vous et suivez vos revenus depuis votre tableau de bord.',
+    home_driver_cta: 'Devenir partenaire',
+
+    footer_tagline: 'Assistance routière à la demande.',
+    footer_area: 'Zone de service au lancement : Montréal & Rive-Sud',
+    footer_rights: 'Tous droits réservés.',
 
     form_title: 'Décrivez votre situation',
     form_sub: "Ces informations permettent d'envoyer le bon remorqueur.",
@@ -76,11 +98,11 @@ export const dictionary = {
     track_expired: "Demande expirée — aucun remorqueur n'a répondu à temps",
 
     feat1_title: 'Prix transparent',
-    feat1_sub: "Vous voyez le prix estimé avant de confirmer, jamais de surprise à la facture.",
+    feat1_sub: 'Voyez le prix estimé avant de confirmer.',
     feat2_title: 'Suivi en temps réel',
-    feat2_sub: 'Voyez votre remorqueur se déplacer sur la carte en direct.',
-    feat3_title: 'Canada entier',
-    feat3_sub: 'Du Yukon à la Nouvelle-Écosse, y compris les régions éloignées.',
+    feat2_sub: 'Suivez votre remorqueur en direct sur la carte.',
+    feat3_title: 'Couverture locale au lancement',
+    feat3_sub: "Disponible d'abord à Montréal et sur la Rive-Sud.",
 
     driver_title: 'Tableau de bord remorqueur',
     driver_pending_approval:
@@ -197,11 +219,31 @@ export const dictionary = {
     hero_title_2: 'on the',
     hero_title_3: 'road?',
     hero_sub:
-      'TowConnect instantly connects you to the nearest tow truck, with a price shown before you confirm. Coverage across all of Canada — 24/7.',
-    badge_canada: '🇨🇦 All of Canada',
-    badge_fast: '⚡ Fast response',
-    badge_safe: '🔒 Transparent pricing',
+      'TowConnect quickly connects you to an available tow truck across Montréal and the South Shore, with a price shown before you confirm and live tracking.',
+    badge_area: 'Montréal & South Shore',
+    badge_fast: 'Fast response',
+    badge_safe: 'Transparent pricing',
     btn_emergency: 'Request help',
+
+    hero_eyebrow: 'On-demand roadside assistance',
+    home_how_title: 'How it works',
+    home_step1_title: 'Tell us where you are',
+    home_step1_sub: 'Describe the problem, your location and your vehicle.',
+    home_step2_title: 'See the price before you confirm',
+    home_step2_sub: 'The estimated amount is shown before you commit to anything.',
+    home_step3_title: 'Track the arrival live',
+    home_step3_sub: 'An available driver is assigned, then tracked on the map.',
+
+    home_cta_title: 'Need a tow truck right now?',
+    home_cta_sub: 'Price shown before you confirm, live tracking until arrival.',
+    home_driver_title: 'Are you a tow operator?',
+    home_driver_sub:
+      'Receive requests near you and follow your earnings from your dashboard.',
+    home_driver_cta: 'Become a partner',
+
+    footer_tagline: 'On-demand roadside assistance.',
+    footer_area: 'Launch service area: Montréal & South Shore',
+    footer_rights: 'All rights reserved.',
 
     form_title: 'Describe your situation',
     form_sub: 'This helps us send the right tow truck to you.',
@@ -260,11 +302,11 @@ export const dictionary = {
     track_expired: 'Request expired — no driver responded in time',
 
     feat1_title: 'Transparent pricing',
-    feat1_sub: 'See the estimated price before you confirm — never a surprise on the bill.',
+    feat1_sub: 'See the estimated price before you confirm.',
     feat2_title: 'Real-time tracking',
-    feat2_sub: 'Watch your tow truck move on the map live.',
-    feat3_title: 'All of Canada',
-    feat3_sub: 'From Yukon to Nova Scotia, including remote regions.',
+    feat2_sub: 'Follow your tow truck live on the map.',
+    feat3_title: 'Local coverage at launch',
+    feat3_sub: 'Available first in Montréal and on the South Shore.',
 
     driver_title: 'Driver dashboard',
     driver_pending_approval:
