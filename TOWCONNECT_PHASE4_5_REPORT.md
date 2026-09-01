@@ -197,7 +197,7 @@ Correction de `.gitignore` au passage : `supabase/.temp` contient une barre obli
 ## 12. Ce qui reste — et ce que « READY » ne couvre pas
 
 1. **Clic « COMPLETE » du challenge 3DS** — action humaine. L'iframe Stripe n'accepte pas de clic automatisé depuis les surfaces disponibles. **Non bloquant** : l'invariant critique est prouvé (`dispatch_offers: []` tant que le paiement n'est pas résolu), et le défaut que ce scénario a révélé est corrigé et vérifié à distance.
-2. **Rotation des identifiants d'`Infos.txt`** — le fichier contient toujours un mot de passe Postgres et un token Mapbox en clair. Il est hors de Git, mais il est sur le disque. À faire sur vos comptes.
+2. ~~**Rotation des identifiants d'`Infos.txt`**~~ — ✅ **fait**, voir § 15 « Credential Rotation ». Les deux identifiants sont rotés et le fichier ne contient plus rien de sensible.
 3. **Taux de commission** — décision business. Les colonnes existent et restent NULL.
 4. **Pondération du scoring pour un chauffeur sans historique** — un compte neuf marque comme un 5,0 sur les 20 % « note » du dispatch. L'affichage est corrigé ; la pondération est une décision produit, et la mission interdisait de toucher aux seuils.
 5. **Onboarding chauffeur** — l'approbation reste manuelle. Normal à ce stade, à savoir avant d'ouvrir.
@@ -211,3 +211,91 @@ Le dashboard proposait de générer un **jeton d'accès personnel Supabase** pou
 L'infrastructure tient. Le vrai enseignement de cette phase n'est pas qu'elle tient, c'est **comment on l'a su** : les deux pannes de ce projet répondaient toutes les deux proprement en HTTP tout en ne faisant rien, et le défaut 3DS se réparait de lui-même avant d'être visible dans les métriques. Les quatre scripts `verify:*` existent pour cette raison et devraient tourner à chaque changement d'infrastructure — ils assertent sur l'état, pas sur des codes de retour.
 
 Avant d'ouvrir à de vrais clients, le point 2 (rotation des identifiants) est le seul qui soit vraiment urgent.
+
+## 15. Credential Rotation
+
+Date : 2026-09-01. Aucune valeur n'apparaît ici, ni dans Git, ni dans la conversation.
+
+### Ce qui était exposé
+
+`Infos.txt` contenait exactement **deux** identifiants en clair — vérifié par balayage de motifs, pas par lecture des valeurs :
+
+| Étiquette dans le fichier | Nature réelle | Roté |
+|---|---|---|
+| `mdp supabase` | Mot de passe de la **base Postgres** du projet | ✅ |
+| `token mapbox` | Jeton d'accès Mapbox **public** (`pk.`) | ✅ |
+
+Aucune clé Stripe, aucune clé `service_role`, aucune URI Postgres complète. **Stripe n'a donc pas été touché** — aucune dépendance n'était cassée par la rotation.
+
+### Mot de passe Postgres — l'application ne s'en sert pas
+
+Vérifié avant d'y toucher, et c'est le point qui évite de modifier des composants pour rien :
+
+- l'application n'ouvre **aucune** connexion Postgres directe : `grep` sur `postgres://`, `DATABASE_URL`, driver `pg` → zéro résultat ;
+- les sept variables lues par le code sont **toutes** des clés d'API Supabase / Stripe / Mapbox ;
+- l'URL du pooler écrite par la CLI (`app/supabase/.temp/pooler-url`) **n'embarque pas** de mot de passe ;
+- la valeur exposée n'apparaît nulle part dans `.env.local`.
+
+Roté via **Supabase → Database Settings → Reset database password**, avec un mot de passe **généré par Supabase** que je n'ai ni choisi ni conservé — le stocker quelque part aurait recréé exactement le problème qu'on ferme. Personne ne le consomme ; si une connexion directe (`psql`, CLI) devient nécessaire un jour, il suffit de refaire un reset.
+
+**Preuve que rien n'a cassé** : la suite RLS live rejouée après rotation passe **78/78**. Si l'application avait dépendu de ce mot de passe, elle serait tombée là.
+
+### Jeton Mapbox — roté, avec une action humaine
+
+Mapbox exige la confirmation du **mot de passe du compte** pour *toute* mutation de jeton — création comme rafraîchissement. Je n'entre pas de mots de passe : vous l'avez saisi, j'ai fait le reste.
+
+Séquence : `Refresh` du *default public token* → l'ancienne valeur est supprimée définitivement côté Mapbox → nouvelle valeur propagée dans `app/.env.local` **et** dans Vercel → **redéploiement** (obligatoire : `NEXT_PUBLIC_*` est inliné dans le bundle à la compilation) → vérification.
+
+Le transport s'est fait par le presse-papier, et l'égalité entre les deux environnements a été contrôlée par **empreinte SHA-256 tronquée**, jamais en comparant des valeurs à l'œil :
+
+| Environnement | Empreinte |
+|---|---|
+| `app/.env.local` | `edb791db6d174952` |
+| Vercel `NEXT_PUBLIC_MAPBOX_TOKEN` | `edb791db6d174952` |
+
+Un jeton `pk.` est **public par conception** — il part dans le bundle de chaque navigateur. Sa présence dans un fichier texte n'ajoutait donc pas grand-chose à son exposition réelle ; il a été roté quand même, parce qu'un identifiant connu comme exposé ne doit pas rester en service.
+
+### Environnements mis à jour
+
+| Environnement | Mapbox | Mot de passe Postgres |
+|---|---|---|
+| Local (`app/.env.local`) | ✅ nouvelle valeur, pas de BOM, 10 variables intactes | s/o — n'y figurait pas |
+| Vercel (Production) | ✅ nouvelle valeur + redéploiement | s/o — n'y figure pas |
+| Supabase Edge Functions | s/o — `CRON_SECRET` / `CRON_DB_KEY` inchangés | s/o |
+| Autre projet Vercel (`v0-website-color-fix`) | vérifié : **aucune** variable d'environnement, donc aucune dépendance au jeton | s/o |
+
+### `Infos.txt`
+
+Contenu sensible **supprimé** et remplacé par une note expliquant où vivent désormais les identifiants. Balayage de contrôle après réécriture : 0 jeton Mapbox, 0 clé JWT, 0 clé Stripe, 0 URI Postgres.
+
+La copie de sauvegarde que j'avais faite par réflexe avant de réécrire le fichier a été **supprimée immédiatement** : c'était une nouvelle copie en clair, donc l'inverse de l'objectif.
+
+### Hygiène vérifiée
+
+| Contrôle | Résultat |
+|---|---|
+| `.env.local`, `Infos.txt`, `.e2e-fixtures.json`, `supabase/.temp` ignorés par Git | ✅ `git check-ignore` sur les quatre |
+| `Infos.txt` déjà commité par le passé ? | ✅ **jamais** — absent de tout l'historique |
+| Matière secrète dans l'historique Git complet (toutes branches) | ✅ **0 correspondance** |
+| Fichiers temporaires (scratchpad, sorties de tâches) | ✅ balayés, 0 correspondance — les scripts lisent `.env.local` à l'exécution au lieu d'embarquer des valeurs |
+| Presse-papier | ✅ vidé en fin d'opération |
+
+### Validations rejouées après rotation
+
+| Test | Résultat |
+|---|---|
+| `npx tsc --noEmit` / `npm run lint` / `npm run build` | ✅ |
+| `npm run test` (vitest) | ✅ 30/30 |
+| `npm run test:integration` (RLS live) | ✅ **78/78** |
+| `npm run verify:functions` | ✅ 17/17 |
+| `npm run verify:webhook` | ✅ 7/7 |
+| `npm run verify:scheduler` | ✅ 2/2 |
+| Géocodage Mapbox (API directe, nouveau jeton) | ✅ HTTP 200, 3 résultats |
+| Parcours minimal sur le déploiement | ✅ connexion → véhicule enregistré → **autocomplétion d'adresse Mapbox** → estimation 46 $ |
+
+Le parcours s'arrête volontairement **avant** la confirmation de paiement : Stripe était hors périmètre et rien ne justifiait de créer une transaction de plus.
+
+### Reste à votre main
+
+- Si ce mot de passe Postgres était **réutilisé ailleurs** (connexion au compte Supabase, autre service), changez-le là aussi : la rotation ne couvre que la base du projet `towconnect`.
+- **URL restrictions** sur le jeton Mapbox : le nouveau jeton, comme l'ancien, fonctionne depuis n'importe quelle origine. Les restreindre à `towconnect-chi.vercel.app` et `localhost` limiterait l'usage d'un jeton public copié depuis le bundle. Non fait ici pour rester une rotation à l'identique, sans changement de comportement.
