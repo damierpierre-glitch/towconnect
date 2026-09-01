@@ -13,15 +13,17 @@ Les migrations `0005` → `0017` sont appliquées sur le projet Supabase `towcon
 
 Quatre défauts réels ont été trouvés **par cette exécution live** — dont deux qui auraient cassé des parcours clients entiers en production — corrigés et re-vérifiés.
 
-> ### ⚠️ Mise à jour Phase 4.5 (2026-08-31)
+> ### ✅ Mise à jour Phase 4.5 (2026-09-01) — infrastructure en service
 >
-> La mise en service de l'infrastructure a été tentée et a **échoué à lever les blockers B1, B4 et B5** — verdict **NOT READY** côté infra. Elle a par ailleurs révélé un défaut plus grave que ceux visés :
+> Verdict infra : **PRODUCTION INFRA READY**. Les trois blockers (B1 Edge Functions, B4 webhook distant, B5 Mapbox) sont **levés et vérifiés en conditions live**, et le scheduler tourne.
 >
-> **Les deux Edge Functions rejettent tout appelant (401), y compris avec la clé service_role.** `cleanup-stale` était déployée depuis un jour et n'aurait rien fait à chaque exécution planifiée : le « filet de sécurité » décrit dans le rapport Phase 2.5 n'a jamais été opérationnel. Cause : elles s'authentifiaient contre `SUPABASE_SERVICE_ROLE_KEY`, que Supabase marque désormais **DEPRECATED**. Correctif écrit et secrets configurés ; **déploiement final restant à faire**.
+> Ce que la version précédente de cet encadré annonçait comme « à faire » est fait : les deux Edge Functions sont redéployées et authentifient le scheduler par `x-cron-secret` ; elles sont vérifiées non pas sur un HTTP 200 mais sur leur **effet réel en base** (offre expirée → `timeout` → candidat suivant, sans aucun onglet ouvert). Le scheduler exécute les deux jobs chaque minute — `net._http_response` montre **10 réponses 200, aucun 401**.
 >
-> Deux corrections applicatives ont en revanche été menées à terme et vérifiées (migration `0017`) : cohérence estimation/dispatch, et suppression d'une écriture systématiquement annulée par rollback.
+> Le code des Phases 1 à 4.5 est commité et déployé, les variables d'environnement Vercel sont configurées, et le webhook Stripe sandbox pointe sur le déploiement réel : **Stripe → Vercel → base** est vérifié avec de vrais événements.
 >
-> Détail complet, actions restantes et commandes : **`TOWCONNECT_PHASE4_5_REPORT.md`**.
+> Quatre défauts supplémentaires ont été trouvés **en validant**, dont un sérieux : le webhook enregistrait un challenge 3D Secure comme un paiement `failed`, écrasant le `requires_action` correct écrit par l'application — le client était informé d'un échec pendant que le challenge était encore à l'écran. Corrigé, testé unitairement et asserté contre l'endpoint déployé.
+>
+> Détail complet, preuves et ce qui reste : **`TOWCONNECT_PHASE4_5_REPORT.md`**.
 
 ---
 
@@ -189,27 +191,29 @@ Une demande au paiement non résolu reste `pending`, donc « active » : au rech
 
 ## 14. Blockers restants
 
-Aucun bloquant technique pour la suite. Restent :
+**B1, B4 et B5 sont levés en Phase 4.5.** Ce qui reste :
 
-- **B1 — Edge Functions.** ⚠️ *Mis à jour en Phase 4.5* : les deux sont désormais **déployées**, mais **non fonctionnelles** — elles rejettent tout appelant (401). Correctif écrit, secrets créés, déploiement final restant. Le filet de sécurité des timeouts n'existe donc toujours pas côté serveur ; le chemin principal (refus immédiat + nudge client) fonctionne. Voir `TOWCONNECT_PHASE4_5_REPORT.md` §1 et §10.
-- **B2 — Décision business : taux de commission.** `commission_amount`/`partner_amount` restent `NULL`, volontairement.
-- **B3 — Sécurité, à faire de votre côté.** Les identifiants en clair de `Infos.txt` (mot de passe Supabase, token Mapbox) devraient être **rotés** — ils ont traversé plusieurs sessions sur disque. Action sur vos comptes.
-- **B4 — Webhook de production.** ⚠️ *Précisé en Phase 4.5* : le déploiement Vercel `towconnect-chi.vercel.app` **précède tout le travail des Phases 1-4**, qui est encore non commité — la route `/api/stripe/webhook` n'existe donc pas en ligne. Configurer l'endpoint suppose d'abord de décider du déploiement (push sur `main` + secrets de production).
-- **B5 — `NEXT_PUBLIC_MAPBOX_TOKEN` vide.** ⚠️ *Toujours ouvert après Phase 4.5* : le token existe dans Vercel mais n'a pas pu être extrait (les boutons « Copy » n'écrivent pas dans le presse-papier depuis l'automatisation ; absent du bundle public car `/request` est derrière authentification ; `Infos.txt` non utilisé). La logique conditionnelle de destination reste validée, mais le géocodage — donc une course de remorquage complète avec destination — n'a pas pu être exercé.
+- **B1 — Edge Functions.** ✅ *Levé en Phase 4.5.* Redéployées avec l'authentification `x-cron-secret`, planifiées chaque minute, et vérifiées sur leur **effet en base** — pas seulement sur un HTTP 200. `npm run verify:functions` (17/17) et `npm run verify:scheduler` le rejouent à volonté.
+- **B2 — Décision business : taux de commission.** Toujours ouvert. `commission_amount`/`partner_amount` restent `NULL`, volontairement.
+- **B3 — Sécurité, à faire de votre côté.** Toujours ouvert, et c'est le point le plus urgent. Les identifiants en clair d'`Infos.txt` (mot de passe Postgres, token Mapbox) devraient être **rotés** : le fichier est hors de Git, mais il est sur le disque et a traversé plusieurs sessions.
+- **B4 — Webhook de production.** ✅ *Levé en Phase 4.5.* Le code des Phases 1-4.5 est déployé, l'endpoint sandbox pointe dessus, et le trajet **Stripe → Vercel → base** est vérifié avec de vrais événements (`npm run verify:webhook`, 7/7).
+- **B5 — `NEXT_PUBLIC_MAPBOX_TOKEN`.** ✅ *Levé en Phase 4.5.* Token récupéré depuis Vercel (jamais depuis `Infos.txt`) ; le géocodage fonctionne sur le déploiement et une course de remorquage complète avec destination a été exercée de bout en bout.
 
 ## 15. Éléments à tester manuellement
 
-1. **Compléter un challenge 3DS** (carte `4000 0027 6000 3184`) en cliquant « COMPLETE » : vérifier que `resumeAfterPaymentAction` re-vérifie côté serveur puis que le dispatch démarre. Comptes de test disponibles : `e2e-rider@towconnect-test.local` / `e2e-driver@towconnect-test.local`.
-2. **Course avec destination** une fois le token Mapbox renseigné : vérifier `tow_distance_km` et la ligne « Distance » du reçu.
-3. **Webhook livré par Stripe** après déploiement (vs. relais local).
+1. **Compléter un challenge 3DS** en cliquant « COMPLETE » : la seule action restant à un humain — l'iframe Stripe n'accepte pas de clic automatisé. **Non bloquant** : l'affichage du challenge, l'invariant « aucune offre de dispatch tant que le paiement n'est pas résolu » et le traitement webhook du cas SCA sont tous vérifiés en Phase 4.5.
+2. ~~Course avec destination~~ — ✅ fait en Phase 4.5 : `tow_distance_km = 1.57`, prix serveur 49,50 $ = montant Stripe au cent près, reçu affichant destination **et** distance.
+3. ~~Webhook livré par Stripe après déploiement~~ — ✅ fait en Phase 4.5.
 
-### Données de test laissées en place
+### Données de test
 
-2 comptes `…@towconnect-test.local`, 5 courses (1 complétée + 4 annulées), 1 véhicule, 6 lignes `payments`, 4 événements webhook. Conservés **volontairement** pour permettre le point 1 ci-dessus. Pour les supprimer, il suffit de supprimer les deux comptes dans **Authentication → Users** : tout le reste disparaît en cascade (sauf `stripe_webhook_events`).
+Les comptes jetables créés pendant la Phase 4.5 ont été **supprimés**, avec leurs courses, offres et paiements, et toute autorisation Stripe encore ouverte a été annulée. État final vérifié : **0 chauffeur en ligne, 0 course en attente, 0 offre ouverte**.
+
+Les données antérieures (comptes `…@towconnect-test.local` et leurs courses) sont **laissées intactes** : elles ne sont pas les miennes à supprimer. Pour les retirer, supprimer les deux comptes dans **Authentication → Users** suffit — tout le reste part en cascade, sauf `stripe_webhook_events`.
 
 ## 16. Limitations connues (non bloquantes)
 
-- Le nudge client de la Phase 2.5 est **throttlé par le navigateur quand l'onglet est en arrière-plan** — constaté en live. Le cron `dispatch-tick` (B1) est précisément le filet prévu pour ce cas.
-- `respond_to_dispatch_offer` marque l'offre `timeout` **puis** lève une exception sur une offre expirée : le `raise` annule cette écriture, l'offre reste donc `offered` jusqu'au balayage suivant. Sans conséquence (l'acceptation est bien refusée), mais le commentaire de `0007` laisse croire l'inverse.
-- L'estimation affichée s'appuie sur `nearby_drivers()`, qui **ne filtre pas** sur la fraîcheur du heartbeat, alors que le dispatch le fait (2 min). Un prix peut donc être calculé à partir d'un chauffeur auquel le dispatch refusera ensuite d'offrir la course — constaté en live.
+- Le nudge client de la Phase 2.5 est **throttlé par le navigateur quand l'onglet est en arrière-plan** — constaté en live. Le cron `dispatch-tick` est précisément le filet prévu pour ce cas, et il est désormais réellement opérationnel (Phase 4.5).
+- ~~`respond_to_dispatch_offer` marque l'offre `timeout` puis lève une exception qui annule cette écriture~~ — corrigé par la migration `0017` : l'écriture systématiquement annulée est retirée, et `acceptRequest()` déclenche immédiatement `nudge_dispatch()` dans une transaction séparée, de sorte que l'offre périmée est réellement soldée.
+- ~~L'estimation s'appuie sur `nearby_drivers()`, qui ne filtre pas sur la fraîcheur du heartbeat alors que le dispatch le fait~~ — corrigé par la migration `0017` : la règle est remontée dans `nearby_drivers()` elle-même, point de passage unique de l'estimation, du prix serveur et de la recherche de candidat. Vérifié en live pendant la Phase 4.5 : un chauffeur au heartbeat périmé fait basculer le flow sur « aucun remorqueur disponible » au lieu de produire un prix invalide.
 - Le remboursement d'un paiement **déjà capturé** n'est pas implémenté (recommandation Phase 5).

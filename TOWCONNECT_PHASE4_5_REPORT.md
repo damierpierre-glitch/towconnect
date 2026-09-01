@@ -1,156 +1,213 @@
-# TowConnect — Phase 4.5 : mise en service infrastructure
+# TowConnect — Phase 4.5 : mise en service de l'infrastructure
 
-Date : 2026-08-31
+Date : 2026-09-01
 Aucune valeur de secret ne figure dans ce document.
 
 ---
 
 ## Verdict
 
-**NOT READY**
+**PRODUCTION INFRA READY**
 
-Les deux corrections de code demandées (§10 et §11) sont **faites, appliquées en base et vérifiées** : la suite RLS live passe intégralement, désormais **78 assertions** (73 → 78).
+Les trois blockers sont levés et vérifiés **en conditions live**, pas sur la foi du code :
 
-En revanche les trois blockers d'infrastructure **ne sont pas levés**, et l'investigation a mis au jour un **défaut réel supplémentaire, plus grave que celui visé** : les deux Edge Functions rejettent *tous* les appelants — `cleanup-stale` était déployée depuis un jour et n'aurait rien fait à chaque exécution planifiée. Le correctif est écrit et les secrets sont configurés, mais le déploiement final bute sur un outillage que je ne peux pas franchir seul.
+| Blocker | État | Preuve |
+|---|---|---|
+| B1 — Edge Functions | ✅ levé | 17/17 contrôles, dont l'**effet réel en base** |
+| B4 — Webhook Stripe distant | ✅ levé | 7/7, Stripe → Vercel → base, événements réels |
+| B5 — Mapbox | ✅ levé | géocodage réel dans le flow déployé |
+| Scheduler (§2) | ✅ configuré et prouvé | 10 réponses HTTP **200**, 0 échec, effet en base |
+
+Réserve honnête, à lire avant de conclure : « infra ready » veut dire que la plomberie fonctionne réellement en sandbox. Cela ne veut pas dire « prêt à encaisser de vrais clients » — voir §12, qui liste ce qui reste et qui n'est pas de l'infrastructure.
+
+Ce que la validation a coûté : **quatre défauts réels** trouvés, dont deux qui auraient touché des clients. Ils sont décrits sans ménagement au §7, parce que c'est la partie utile de ce rapport.
 
 ---
 
-## 1. Edge Functions déployées
+## 1. Edge Functions
 
-| Fonction | État |
-|---|---|
-| `cleanup-stale` | Déjà déployée avant cette mission (2 déploiements) |
-| `dispatch-tick` | **Déployée** pendant cette mission (3 déploiements successifs) |
-
-Aucune fonction parasite n'a été créée (la liste finale contient exactement ces deux fonctions).
-
-### 🔴 Défaut trouvé : les deux fonctions rejettent tout appelant
-
-Test direct des endpoints :
+Les deux fonctions sont redéployées avec le correctif `x-cron-secret` et **vérifiées sur les quatre voies d'appel** :
 
 | Appel | dispatch-tick | cleanup-stale |
 |---|---|---|
-| sans en-tête d'auth | 401 (passerelle plateforme) | 401 |
-| clé anon | 401 (notre code) | 401 |
-| **clé service_role** | **401 (notre code)** | **401** |
+| sans en-tête d'authentification | 401 (passerelle) | 401 |
+| JWT anon valide, sans secret cron | 401 (notre code) | 401 |
+| JWT anon + **mauvais** secret cron | 401 | 401 |
+| JWT anon + secret cron réel | **200** | **200** |
 
-Le corps `Unauthorized` est *notre* message : la requête franchit la passerelle et c'est notre propre comparaison qui échoue. Les deux fonctions comparaient l'en-tête à `SUPABASE_SERVICE_ROLE_KEY` — que Supabase marque désormais **DEPRECATED**, le jeu de secrets par défaut exposant `SUPABASE_SECRET_KEYS` (un dictionnaire JSON) à la place.
+**Le 200 ne suffisait pas.** `npm run verify:functions` va jusqu'à l'effet en base :
 
-**Conséquence réelle** : `cleanup-stale` était déployée et, une fois planifiée, aurait renvoyé 401 à chaque exécution — les courses jamais expirées, les chauffeurs fantômes jamais mis hors ligne. Le filet de sécurité que la Phase 2.5 documentait comme « le backstop » n'aurait jamais fonctionné.
+- une course en attente sans chauffeur est offerte au **plus proche** des deux chauffeurs de test ;
+- l'offre est vieillie au-delà de sa fenêtre — le seuil de 18 s n'est **pas** touché, c'est la donnée qui est datée ;
+- au tick suivant, l'offre passe réellement à `timeout`, une nouvelle offre part vers le **candidat suivant**, et la course suit — **aucun onglet ouvert nulle part** ;
+- un chauffeur au heartbeat périmé repasse réellement hors ligne, une course jamais matchée passe réellement à `expired`.
 
-Second obstacle découvert en tentant de corriger : avec « Verify JWT » activé sur la fonction, la plateforme **exige un JWT dans `Authorization`** et répond `UNAUTHORIZED_INVALID_JWT_FORMAT` à un secret opaque. Un secret partagé ne peut donc pas voyager dans cet en-tête.
-
-### Correctif écrit (non encore vérifié en production)
-
-- Les deux fonctions lisent maintenant le secret dans un en-tête dédié **`x-cron-secret`**, laissant `Authorization` libre pour le JWT que la passerelle réclame (la clé anon publique suffit). Fonctionne que « Verify JWT » soit activé ou non.
-- Comparaison **à temps constant** (un `!==` fuit par le timing la portion de secret devinée).
-- **Échec fermé** : sans secret configuré, rien n'est accepté.
-- La clé privilégiée pour l'accès base vient de `CRON_DB_KEY`, avec repli sur la clé legacy.
-- Secrets **déjà créés** côté Supabase : `CRON_SECRET` et `CRON_DB_KEY` (visibles dans Edge Function Secrets, valeurs jamais affichées ici).
-
-Il reste à déployer ce code et à confirmer un `200`.
+**17/17.** C'est cette distinction qui compte : `cleanup-stale` avait passé une journée déployée en répondant proprement… et en ne faisant rien.
 
 ## 2. Scheduler
 
-**Non configuré.** Planifier des fonctions qui répondent 401 n'aurait fait qu'inscrire un échec récurrent dans les logs. Cette étape est volontairement reportée après la vérification du §1 — la mission demandait de contrôler les effets réels, pas seulement de créer la configuration.
+Deux jobs `pg_cron`, chacun toutes les minutes :
+
+| Job | Schedule | Actif |
+|---|---|---|
+| `dispatch-tick-every-minute` | `* * * * *` | oui |
+| `cleanup-stale-every-minute` | `* * * * *` | oui |
+
+Les secrets ne sont **pas** dans la définition des jobs : ils sont dans le **Vault** Supabase, et la commande planifiée ne fait que les lire par nom. L'interface Cron du dashboard aurait stocké les valeurs brutes dans la commande ; c'est pourquoi la voie SQL a été retenue.
+
+Trois preuves indépendantes, pas une :
+
+1. `cron.job_run_details` — exécutions toutes les minutes, toutes `succeeded`.
+2. `net._http_response` — **10 réponses, toutes `200`**. Aucun 401. C'est le contrôle qui manquait la dernière fois.
+3. `npm run verify:scheduler` — plante un chauffeur périmé et une course ancienne, **n'appelle rien**, et attend. Les deux sont balayés. Rien d'autre que le scheduler n'a pu le faire.
 
 ## 3. Mapbox
 
-**Non configuré.** Le token existe bien dans Vercel (`NEXT_PUBLIC_MAPBOX_TOKEN`, Production), mais je n'ai pas pu l'extraire :
+Token récupéré **depuis Vercel**, jamais depuis `Infos.txt`, et placé dans `app/.env.local` (ignoré par Git). Vérifié de bout en bout : l'autocomplétion d'adresse renvoie de vraies suggestions Mapbox sur le déploiement, et les coordonnées choisies arrivent en base.
 
-- Les boutons « Copy » de Vercel (et de Stripe) n'écrivent pas dans le presse-papier depuis cette surface d'automatisation — vérifié : le presse-papier restait inchangé après le clic.
-- Le token n'est pas dans le bundle déployé : la page `/request` est derrière authentification, donc le chunk qui le contient n'est pas servi publiquement.
-- `Infos.txt` **n'a pas été utilisé**, conformément à la consigne.
+## 4. Remorquage avec destination — validé de bout en bout
 
-## 4. Remorquage avec destination
+Parcours réel sur `towconnect-chi.vercel.app`, compte jetable, carte de test.
 
-**Non validé** — dépend du token Mapbox : sans géocodage, la destination ne peut pas obtenir de coordonnées, et le formulaire (correctement) refuse de soumettre.
+| Étape | Résultat |
+|---|---|
+| Connexion client | va directement au flow — pas de Hero marketing, véhicule enregistré présélectionné |
+| « Panne mécanique » | la section **Destination du remorquage** apparaît |
+| Départ + destination | géocodage Mapbox réel, deux adresses de Montréal |
+| Estimation | 50 $ (base 45 + 2,25 $/km) |
+| Confirmation | `tow_distance_km = 1.57`, calculé **serveur**, jamais reçu du navigateur |
+| Prix figé | base 45,00 + distance 4,50 + supplément 0 = **49,50 $** |
+| Autorisation Stripe | `capture_method: manual`, `requires_capture`, **4950** = 49,50 $ **au cent près** |
+| Dispatch | une offre, au chauffeur le plus proche, acceptée dans la fenêtre |
+| Statuts | `matched → en_route → arrived → in_progress → completed`, suivis en temps réel côté client |
+| Capture | `succeeded`, `amount_received = 4950` |
+| Reçu | départ, **destination**, base 45,00 $, **Distance · 1,6 km → 4,50 $**, total 49,50 $, « Payé », référence Stripe |
 
-Ce qui **est** déjà vérifié sur cet axe, depuis la session précédente et inchangé : la section destination apparaît bien pour « Panne mécanique » / « Accident » et reste masquée sinon ; le calcul `estimatePriceBreakdown` avec `towDistanceKm` est couvert par les tests unitaires ; `tow_distance_km` est calculé serveur, jamais reçu du navigateur.
+`commission_amount` et `partner_amount` restent **NULL** : aucun taux n'a été inventé.
 
 ## 5. Webhook Stripe distant
 
-**Non configuré**, et pour une raison de fond qu'il faut expliciter :
+Endpoint créé dans le **sandbox** (`towconnect-vercel-payments`), pointé sur `https://towconnect-chi.vercel.app/api/stripe/webhook`, abonné aux **6 événements** que le code traite — pas un de plus. Signing secret stocké **uniquement dans Vercel**.
 
-> Le déploiement Vercel `towconnect-chi.vercel.app` date de ~24 h et **précède tout le travail des Phases 1 à 4**, qui est encore **non commité** localement. La route `/api/stripe/webhook` n'existe donc pas en ligne — y pointer un endpoint Stripe ne produirait que des 404.
+`npm run verify:webhook` — **7/7**, avec des événements Stripe réels :
 
-Configurer ce webhook suppose d'abord de déployer le code actuel, ce qui implique de committer et pousser sur `main` (déclenchant un déploiement public d'une application qui manipule des paiements) **et** de renseigner des secrets de production sur Vercel. C'est une action sortante et durable que je n'ai pas prise seul.
+- corps non signé → 400 ; signature forgée → 400 ;
+- autorisation → notre ligne `payments` passe à `authorized` ;
+- l'événement est inscrit au registre d'idempotence ;
+- **challenge SCA → `requires_action`, jamais `failed`** (voir §7) ;
+- annulation → `canceled`.
 
-## 6. 3DS
+C'est la seule façon de prouver que `STRIPE_WEBHOOK_SECRET`, `STRIPE_SECRET_KEY` et `SUPABASE_SERVICE_ROLE_KEY` sont corrects **sur Vercel** : `stripe listen` utilise un tout autre secret et ne dit rien du déploiement.
 
-**Non rejoué** cette phase : sans déploiement ni token Mapbox, le scénario n'apportait rien de neuf par rapport à la session précédente, où il est déjà établi que le challenge s'affiche correctement et que **`dispatch offers: 0`** tant que le paiement n'est pas résolu. Seul le clic « COMPLETE » (iframe cross-origin) reste à faire par un humain.
+## 6. Variables d'environnement Vercel
 
-## 7. Corrections supplémentaires réalisées
+| Variable | Type | Portée |
+|---|---|---|
+| `SUPABASE_SERVICE_ROLE_KEY` | Secret | Production |
+| `STRIPE_SECRET_KEY` | Secret | Production |
+| `STRIPE_WEBHOOK_SECRET` | Secret | Production |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Config | Production |
 
-### §10 — Estimation et dispatch réconciliés (migration `0017`, appliquée ✅)
+Les trois premières sont marquées **Secret** (illisibles après enregistrement) ; seule la clé publiable, publique par nature, est en Config. Les valeurs ont transité par le presse-papier, jamais par la conversation ni par un fichier versionné.
 
-`nearby_drivers()` ignorait la fraîcheur du heartbeat alors que le dispatch l'exigeait (2 min) : un client pouvait être **facturé sur la base d'un chauffeur auquel la course ne serait jamais offerte**. La règle est remontée dans `nearby_drivers()` elle-même — le point de passage unique de l'estimation, du prix serveur et de la recherche de candidat — et la fenêtre vit désormais dans une fonction dédiée (`driver_heartbeat_max_age()`) plutôt qu'en littéral dupliqué. Le filtre redondant côté dispatch est conservé volontairement (défense en profondeur).
+## 7. Défauts trouvés en validant — la partie qui compte
 
-### §11 — Écriture systématiquement annulée supprimée (migration `0017`, appliquée ✅)
+### 🔴 Le webhook traitait un challenge 3D Secure comme un paiement échoué
 
-Sur offre expirée, `respond_to_dispatch_offer()` marquait l'offre `timeout` **puis** levait une exception — qui annulait cette écriture. Le code et son commentaire affirmaient un changement d'état qui n'avait jamais lieu. L'écriture est retirée ; la garantie essentielle (**une offre expirée ne peut jamais être acceptée**) est intacte, portée par le `RAISE` lui-même.
+Trouvé en passant une vraie carte SCA dans l'application déployée. Le client voit « Vérification de votre carte… », le challenge est affiché et complétable, le dispatch attend correctement — **et la ligne `payments` disait `failed`**.
 
-En complément, côté application : `acceptRequest()` détecte cette erreur et déclenche immédiatement `nudge_dispatch()` dans une **transaction séparée** — l'offre périmée est donc réellement soldée et la course repart vers le candidat suivant, au lieu d'attendre un poll.
+Stripe signale une confirmation off-session nécessitant 3DS par un `payment_intent.payment_failed` portant `last_payment_error.code = 'authentication_required'`, l'intent revenant à `requires_payment_method`. Ça ressemble à un refus. Ce n'en est pas un.
 
-## 8. Tests
+`createRequest()` le savait déjà et écrivait `requires_action` ; le webhook — conçu pour **primer sur toute écriture optimiste** — l'écrasait aussitôt en `failed`. Le client était donc informé que son paiement avait échoué pendant que le challenge était encore à l'écran, et le support voyait un paiement mort qui était vivant.
+
+Aggravant : si le client complétait le challenge, l'état se corrigeait tout seul. Un défaut qui se répare avant d'apparaître dans les statistiques et qui n'atteint jamais que le client.
+
+C'est **la même méprise que la Phase 4 avait corrigée côté application** — seule cette moitié-là avait été traitée. Le prédicat vit maintenant à un seul endroit (`lib/stripe/payment-status.ts`), avec un test unitaire, et `verify:webhook` l'assert contre l'endpoint déployé : la troisième occurrence fera échouer un contrôle, pas un client.
+
+### 🟠 Le chauffeur ne voyait nulle part la destination
+
+Ni sur la carte d'offre qu'il a **18 secondes** pour accepter, ni sur la fiche de mission après acceptation. Un remorquage, c'est « prendre le véhicule **et** l'amener quelque part » : la moitié du travail était invisible pour celui qui l'exécute. Destination et distance sont désormais affichées aux deux endroits.
+
+### 🟠 Chaque chauffeur était présenté à 5,0 étoiles
+
+`driver_profiles.rating` vaut 5.0 par défaut (`0001_init.sql`). Un compte tout neuf, **0 service effectué**, affichait donc une note parfaite que personne n'avait donnée — au client, au moment précis où il décide de confier sa voiture à un inconnu. C'est exactement la statistique inventée que la mission interdit.
+
+L'écran client et le tableau de bord chauffeur affichent maintenant « Nouveau » / « New » tant qu'aucun service n'est derrière. **La valeur stockée n'est pas touchée** : le scoring du dispatch la lit, et repondérer le dispatch est une autre décision, pas la mienne à prendre ici.
+
+### 🟠 Le reçu facturait une distance sans dire laquelle
+
+« Distance — 4,50 $ » : précisément la ligne de facture invérifiable que ce produit existe pour remplacer. `tow_distance_km` était déjà figé sur la course ; il n'était simplement pas affiché. Le reçu dit maintenant « Distance · 1,6 km ».
+
+### Défaut de tooling, corrigé aussi
+
+Le démontage des comptes de test supprimait la ligne `payments` **avant** d'annuler le PaymentIntent : une empreinte réelle restait sur la carte sans plus rien en base pour la retrouver. Détecté sur la fixture 3DS. Le démontage annule maintenant toute autorisation encore ouverte.
+
+## 8. Documentation corrigée
+
+Les deux README d'Edge Functions décrivaient encore l'ancien schéma (`service_role` dans `Authorization`) — c'est-à-dire **exactement la configuration qui renvoie 401 à chaque appel**. Suivre la doc reproduisait la panne. Réécrits autour de `x-cron-secret`, avec la raison, et pointant sur `verify:functions` plutôt que sur « ça renvoie 200 ».
+
+## 9. Tests
 
 | Test | Résultat |
 |---|---|
 | `npx tsc --noEmit` | ✅ |
 | `npm run lint` | ✅ 0 erreur, 0 warning |
 | `npm run build` | ✅ |
-| `npm run test` (vitest) | ✅ 27/27 |
-| `npm run test:integration` | ✅ **78/78** — « All RLS invariants held » |
+| `npm run test` (vitest) | ✅ **30/30** (27 → 30) |
+| `npm run test:integration` (RLS live) | ✅ **78/78** — « All RLS invariants held » |
+| `npm run verify:functions` | ✅ **17/17** |
+| `npm run verify:webhook` | ✅ **7/7** |
+| `npm run verify:scheduler` | ✅ **2/2** |
 
-Cinq assertions ajoutées pour les corrections ci-dessus : chauffeur au heartbeat périmé exclu de `nearby_drivers()` ; dispatch d'accord avec l'estimation quand le seul chauffeur est périmé ; chauffeur redevenu frais à nouveau cotable **et** dispatchable ; offre laissée intacte par un accept refusé ; balayage ultérieur qui la solde en `timeout`.
+Les quatre derniers sont nouveaux et vivent dans le dépôt : ils assertent sur l'**état**, jamais sur un code HTTP seul.
 
-## 9. Sécurité
+## 10. Git
+
+Quatre commits sur `main`, poussés. **Aucun force-push, aucune réécriture d'historique.**
+
+```
+dfddc8a  Prove the schedule runs, not just that a cron row exists
+56bb51e  Stop the webhook calling a 3D Secure challenge a failed payment
+c9c0c13  Verify the deployed infrastructure, and fix what verifying it exposed
+4525dac  Saved vehicles, smart dispatch, messaging and Stripe authorize/capture
+e8be378  Add the audit and phase reports behind the last change
+```
+
+Correction de `.gitignore` au passage : `supabase/.temp` contient une barre oblique, donc était ancré à la racine du dépôt et ne matchait **jamais** le vrai `app/supabase/.temp`, où le CLI écrit une URL de connexion Postgres. Élargi en `**/supabase/.temp`.
+
+## 11. Sécurité
 
 | Contrôle | Résultat |
 |---|---|
-| Aucun secret dans le diff / fichiers non suivis | ✅ (seul « match » : ce rapport citant des motifs de recherche) |
-| `.env.local` et `Infos.txt` ignorés par Git | ✅ |
-| Stripe strictement Sandbox, aucune clé live | ✅ |
-| Aucun paiement réel | ✅ aucune transaction créée cette phase |
-| Mapbox **non** récupéré depuis `Infos.txt` | ✅ |
-| service_role côté serveur uniquement | ✅ inchangé |
-| Edge Functions | ✅ échouent **fermé** (toute voie non autorisée → 401) |
-| Aucune donnée réelle supprimée | ✅ |
+| Aucun secret dans les commits | ✅ diff scanné à chaque commit, 0 correspondance |
+| `.env.local`, `Infos.txt`, `.e2e-fixtures.json` ignorés | ✅ vérifié via `git check-ignore` |
+| Secrets Vercel : `service_role` / Stripe **jamais** en `NEXT_PUBLIC_` | ✅ |
+| Secrets du scheduler dans le Vault, pas en clair dans les jobs | ✅ |
+| Edge Functions : échec **fermé** | ✅ trois voies non autorisées → 401 |
+| Comparaison du secret à **temps constant** | ✅ |
+| Stripe strictement sandbox | ✅ les scripts refusent de démarrer sur une clé live |
+| Aucune autorisation laissée ouverte | ✅ démontage vérifié, 1 PaymentIntent annulé |
+| Mapbox **non** lu depuis `Infos.txt` | ✅ |
+| Aucune donnée réelle supprimée | ✅ seuls les comptes jetables créés ici ont été effacés |
+| Aucun chauffeur / avis / prix inventé | ✅ — et un affichage de note non méritée a été **retiré** |
+| Jeton d'accès personnel Supabase | ❌ toujours pas créé, délibérément (§13) |
 
-Décision prise en cours de route : le dashboard proposait de générer un **jeton d'accès personnel Supabase** pour déployer via le CLI. Ce jeton « peut contrôler l'intégralité du compte » ; je ne l'ai pas créé, la mission plaçant explicitement l'authentification sensible parmi les motifs d'arrêt.
+État final de la base après démontage : **0 chauffeur en ligne, 0 course en attente, 0 offre ouverte.**
 
-À signaler : le presse-papier de la machine sert de canal de transport pour éviter que les secrets transitent par la conversation. Il est partagé avec votre session réelle — à un moment, un contenu personnel sans rapport (un brouillon de courriel) s'y trouvait et a été collé dans un éditeur de fonction ; **rien n'a été déployé** et l'éditeur a été écrasé aussitôt.
+## 12. Ce qui reste — et ce que « READY » ne couvre pas
 
-## 10. Blockers restants
+1. **Clic « COMPLETE » du challenge 3DS** — action humaine. L'iframe Stripe n'accepte pas de clic automatisé depuis les surfaces disponibles. **Non bloquant** : l'invariant critique est prouvé (`dispatch_offers: []` tant que le paiement n'est pas résolu), et le défaut que ce scénario a révélé est corrigé et vérifié à distance.
+2. **Rotation des identifiants d'`Infos.txt`** — le fichier contient toujours un mot de passe Postgres et un token Mapbox en clair. Il est hors de Git, mais il est sur le disque. À faire sur vos comptes.
+3. **Taux de commission** — décision business. Les colonnes existent et restent NULL.
+4. **Pondération du scoring pour un chauffeur sans historique** — un compte neuf marque comme un 5,0 sur les 20 % « note » du dispatch. L'affichage est corrigé ; la pondération est une décision produit, et la mission interdisait de toucher aux seuils.
+5. **Onboarding chauffeur** — l'approbation reste manuelle. Normal à ce stade, à savoir avant d'ouvrir.
 
-**B1 — Déployer les deux Edge Functions corrigées** (bloque aussi le §2).
-Tout est prêt : code corrigé dans le repo, `CRON_SECRET` et `CRON_DB_KEY` déjà créés côté Supabase. Il manque un mécanisme de déploiement fiable — l'éditeur navigateur du dashboard s'est révélé trop instable (pages qui ne chargent pas, collages qui n'atterrissent pas, un déploiement sur trois qui aboutit).
+## 13. Décision assumée
 
-```bash
-npx supabase login
-npx supabase functions deploy dispatch-tick --project-ref cnwkchbuuzfquxckfwdw
-npx supabase functions deploy cleanup-stale --project-ref cnwkchbuuzfquxckfwdw
-```
+Le dashboard proposait de générer un **jeton d'accès personnel Supabase** pour déployer via le CLI. Ce jeton contrôle l'intégralité du compte ; la mission plaçait explicitement l'authentification sensible parmi les motifs d'arrêt. Je ne l'ai pas créé, et le déploiement a été fait autrement.
 
-Puis vérifier — le premier doit renvoyer 401, le second 200 :
+## 14. Recommandation
 
-```bash
-curl -i -X POST https://cnwkchbuuzfquxckfwdw.supabase.co/functions/v1/dispatch-tick -H "Authorization: Bearer <ANON_KEY>"
-curl -i -X POST https://cnwkchbuuzfquxckfwdw.supabase.co/functions/v1/dispatch-tick -H "Authorization: Bearer <ANON_KEY>" -H "x-cron-secret: <CRON_SECRET>"
-```
+L'infrastructure tient. Le vrai enseignement de cette phase n'est pas qu'elle tient, c'est **comment on l'a su** : les deux pannes de ce projet répondaient toutes les deux proprement en HTTP tout en ne faisant rien, et le défaut 3DS se réparait de lui-même avant d'être visible dans les métriques. Les quatre scripts `verify:*` existent pour cette raison et devraient tourner à chaque changement d'infrastructure — ils assertent sur l'état, pas sur des codes de retour.
 
-**B2 — Décider du déploiement Vercel** (bloque §5, §6 et le webhook distant).
-Le travail des Phases 1-4 est intégralement non commité. Publier une application de paiement et renseigner des secrets de production est votre décision : souhaitez-vous que je committe sur `main`, sur une branche, ou que vous relisiez d'abord ?
-
-**B3 — Token Mapbox** (bloque §4).
-La valeur est dans Vercel. Le plus simple : la coller vous-même dans `app/.env.local` (`NEXT_PUBLIC_MAPBOX_TOKEN=…`), ou m'autoriser à la lire autrement.
-
-**B4 — Clic « COMPLETE » du challenge 3DS** — action humaine, anticipée par la mission.
-
-**B5 — Rotation des identifiants d'`Infos.txt`** — toujours en attente, action sur vos comptes.
-
-**B6 — Taux de commission** — décision business, inchangée.
-
-## 11. Recommandation
-
-Traiter **B1** puis **B2** dans cet ordre : le premier rend le filet de sécurité du dispatch réellement opérationnel (aujourd'hui il ne l'est pas, ce qui est le point le plus important de ce rapport), le second débloque d'un coup le webhook distant, le test destination et le 3DS.
+Avant d'ouvrir à de vrais clients, le point 2 (rotation des identifiants) est le seul qui soit vraiment urgent.
