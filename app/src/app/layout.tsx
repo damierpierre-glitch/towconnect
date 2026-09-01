@@ -19,13 +19,25 @@ const dmSans = DM_Sans({
   weight: ['300', '400', '500', '600'],
 });
 
+// A share card needs absolute URLs. VERCEL_PROJECT_PRODUCTION_URL is set by
+// Vercel on every deployment; the fallback only matters for local runs, where
+// nothing is scraping the page anyway.
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : 'http://localhost:3000');
+
 // The previous copy here promised the whole country. The launch area is
 // Montréal and the South Shore, and the metadata is the first thing a search
 // engine or a link preview quotes back at people — so it says that instead.
+// The card image itself comes from src/app/opengraph-image.jpg by convention.
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: 'TowConnect — Remorquage à la demande | Montréal & Rive-Sud',
   description:
     'TowConnect vous connecte rapidement à un remorqueur disponible dans la région de Montréal et la Rive-Sud, avec un prix affiché avant confirmation et un suivi en direct.',
+  applicationName: 'TowConnect',
   openGraph: {
     title: 'TowConnect — Remorquage à la demande',
     description:
@@ -33,6 +45,13 @@ export const metadata: Metadata = {
     siteName: 'TowConnect',
     locale: 'fr_CA',
     type: 'website',
+    url: siteUrl,
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'TowConnect — Remorquage à la demande',
+    description:
+      'Un remorqueur disponible à Montréal et sur la Rive-Sud, prix affiché avant confirmation, suivi en direct.',
   },
 };
 

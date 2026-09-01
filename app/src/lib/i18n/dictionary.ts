@@ -21,7 +21,6 @@ export const dictionary = {
     badge_safe: 'Prix transparent',
     btn_emergency: "Demander de l'aide",
 
-    hero_eyebrow: 'Assistance routière à la demande',
     home_how_title: 'Comment ça marche',
     home_step1_title: 'Dites-nous où vous êtes',
     home_step1_sub: 'Décrivez la panne, votre position et votre véhicule.',
@@ -225,7 +224,6 @@ export const dictionary = {
     badge_safe: 'Transparent pricing',
     btn_emergency: 'Request help',
 
-    hero_eyebrow: 'On-demand roadside assistance',
     home_how_title: 'How it works',
     home_step1_title: 'Tell us where you are',
     home_step1_sub: 'Describe the problem, your location and your vehicle.',

@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
+import { BrandMark } from '@/components/BrandMark';
 
 export function LandingHero() {
   const { t } = useLanguage();
@@ -11,14 +12,14 @@ export function LandingHero() {
       {/* ---------------------------------------------------------------- hero */}
       <section className="relative overflow-hidden brand-aura brand-grid">
         <div className="relative max-w-3xl mx-auto px-5 sm:px-6 pt-14 sm:pt-24 pb-14 sm:pb-20 text-center">
-          {/* An eyebrow, not a second logo. The wordmark is already in the
-              navbar directly above this; repeating it at 3x the size just
-              makes the page say its own name twice before saying anything. */}
-          <p className="inline-flex items-center gap-2.5 mb-6 text-[11px] sm:text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-            <span className="w-6 h-px bg-orange" aria-hidden />
-            {t('hero_eyebrow')}
-            <span className="w-6 h-px bg-orange" aria-hidden />
-          </p>
+          {/* The stacked lockup, with the symbol at full size — the navbar
+              carries the small horizontal arrangement, so this is a different
+              view of the mark rather than the same one twice. It replaces the
+              typographic eyebrow that stood in while no logo existed; the
+              tagline it carried now lives in the footer. */}
+          <div className="flex justify-center mb-6 sm:mb-7">
+            <BrandMark size="lg" />
+          </div>
 
           <h1 className="font-display font-extrabold text-[34px] leading-[1.08] sm:text-[52px] lg:text-[62px] tracking-[-0.03em] text-balance mb-5">
             {t('hero_title_1')}

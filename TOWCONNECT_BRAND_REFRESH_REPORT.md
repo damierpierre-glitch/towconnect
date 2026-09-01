@@ -7,6 +7,12 @@ Phase 6 n'est pas commencée.
 
 ## 0. Les deux références jointes ne sont jamais arrivées
 
+> **Mise à jour du 2026-09-01 (Phase 5.2).** Le logo officiel est arrivé depuis,
+> et il est installé — voir §10. Ce qui suit décrit l'état au moment de la passe
+> Brand Refresh et reste la raison d'être de l'architecture `BrandMark`.
+> Le mockup, lui, n'est jamais arrivé ; la direction visuelle a été reconstruite
+> en code à partir de sa description écrite, ce que la mission demandait.
+
 La mission annonce deux pièces jointes — le logo officiel et le mockup premium de
 homepage. **Aucun fichier image n'est arrivé avec le message.** Le dépôt n'en
 contenait pas non plus : `app/public/` ne contenait que les cinq SVG du starter
@@ -74,6 +80,10 @@ avec un ratio préservé et trois tailles calibrées (`sm` barre, `md` auth/pied
 page, `lg` marketing). `app/public/brand/README.md` contient ces instructions à
 côté de l'emplacement du fichier.
 
+> **Mise à jour (Phase 5.2).** C'est exactement ce qui s'est passé : le logo
+> officiel est arrivé, et l'installer n'a touché que `BrandMark.tsx`. Le détail
+> est en §10.
+
 Le pied de page est rendu uniquement pour les visiteurs non connectés : un
 chauffeur en mission n'a pas besoin d'un pied de page marketing sous sa carte.
 
@@ -128,6 +138,12 @@ reste du système.
 grand juste sous la navbar, qui le contient déjà — la page disait son propre nom
 deux fois avant de dire quoi que ce soit. Remplacé par un filet-titre discret
 (« Assistance routière à la demande », capitales espacées, filets orange).
+
+> **Mise à jour (Phase 5.2).** Avec le logo officiel, l'argument tombe : la barre
+> porte l'arrangement horizontal réduit, le hero porte le lockup empilé avec le
+> symbole à pleine taille. Ce sont deux vues du même logo, pas la même deux fois.
+> Le hero affiche donc désormais le lockup, et le filet-titre lui cède la place —
+> sa phrase vit maintenant dans le pied de page. Voir §10.
 
 ---
 
@@ -261,15 +277,168 @@ et aucune requête n'a été modifiée par cette mission.
 
 ## 9. Limitations
 
-1. **Le logo officiel n'est pas installé** — il n'a pas été fourni. C'est le seul
-   point ouvert de la mission. Un fichier dans `app/public/brand/` et une ligne
-   dans `BrandMark.tsx` le referment.
-2. **`favicon.ico` est toujours l'icône Next.js par défaut.** À dériver du logo
-   officiel en même temps — c'est la marque dans l'onglet du navigateur.
-3. **Aucune image `openGraph`** : une carte de partage sans image est plus faible
-   qu'avec. À produire à partir du logo, au même moment.
+1. ~~**Le logo officiel n'est pas installé**~~ — ✅ **fait en Phase 5.2**, voir §10.
+2. ~~**`favicon.ico` est toujours l'icône Next.js par défaut.**~~ — ✅ **fait en
+   Phase 5.2** : dérivé de l'épingle du logo officiel.
+3. ~~**Aucune image `openGraph`**~~ — ✅ **fait en Phase 5.2** : carte 1200×630
+   avec le logo officiel.
 4. **`badge_canada` a été renommée `badge_area`** : toute référence externe devrait
    être mise à jour (aucune n'existe dans le dépôt).
 5. Les rapports de phases antérieures contiennent encore l'ancien positionnement.
    Ce sont des documents historiques, pas du contenu livré ; ils n'ont pas été
    réécrits.
+
+---
+
+## 10. Phase 5.2 — Assets de marque officiels
+
+Date : 2026-09-01. Mission de fermeture des limitations §9.1, §9.2 et §9.3.
+
+### D'où vient le fichier
+
+Le logo est arrivé cette fois, mais **comme image dans la conversation, pas comme
+fichier sur le disque** : rien de neuf dans `Downloads`, `Pictures`, le dépôt ni
+les dossiers temporaires. Les octets ont été récupérés depuis le transcript de la
+session, où le message est stocké en base64.
+
+```
+image/webp · 1254 × 1254 · RGBA · 144 328 octets
+canal alpha : extrema (0, 255) -> fond déjà transparent
+```
+
+Le fond transparent est ce qui compte le plus : le logo se pose sur `#0d0d0d`
+sans halo blanc, sans détourage, sans retouche.
+
+### Découpe — aucun pixel redessiné
+
+Trois zones ont été mesurées sur le canal alpha du fichier officiel, puis
+découpées. Rien n'est redessiné, recoloré ni recomposé :
+
+| Asset | Boîte de découpe (sur 1254²) | Sortie | Poids |
+|---|---|---|---|
+| `towconnect-logo.png` — lockup empilé complet | `(57, 202) → (1200, 946)` | 645×420 | 228 KB |
+| `towconnect-wordmark.png` — « TowConnect » seul | `(57, 790) → (1200, 946)` | 703×96 | 76 KB |
+| `towconnect-mark.png` — l'épingle seule | `(442, 200) → (806, 648)` | 256×256 | 78 KB |
+
+Ces coordonnées sont notées ici pour que n'importe quel autre format puisse être
+régénéré depuis le master sans re-mesurer. Le poids en dépôt est la source :
+`next/image` sert des dérivés WebP/AVIF redimensionnés, jamais ces fichiers tels
+quels.
+
+### Pourquoi deux arrangements
+
+Le logo officiel est un lockup **empilé** : symbole au-dessus, mot en dessous.
+Rogné, il fait 1143 × 744, soit environ 1,5:1. Placé dans une barre de 56 px à
+28 px de haut, il ferait 43 px de large — et le mot à l'intérieur ferait 6 px de
+haut. Illisible.
+
+`BrandMark` rend donc deux arrangements du **même** artwork officiel :
+
+- **`sm` — barre de navigation et mobile** : l'épingle (26 → 32 px) et le mot
+  (13 → 16 px) côte à côte, chacun à ses propres proportions.
+- **`md` / `lg` — pied de page, écrans d'auth, hero** : le lockup empilé réel
+  (64 → 112 px de haut).
+
+C'est un changement de mise en page, pas de dessin. Si la marque possède une
+version horizontale officielle, elle remplace l'arrangement `sm` en changeant les
+deux `<Image>` par un seul.
+
+Conséquence directe : le hero affiche maintenant le lockup empilé, et le
+filet-titre typographique qui tenait sa place a disparu. Sur un iPhone de 812 px,
+le CTA principal reste **au-dessus de la ligne de flottaison** — mesuré, bas du
+bouton à 664 px.
+
+### Favicon — l'épingle, pas le logo réduit
+
+La consigne était de ne pas simplement rétrécir le logo complet. La mesure le
+confirme : le symbole entier (883 × 568, épingle + route + dépanneuse) réduit à
+16 ou 32 px devient une bouillie orange. L'épingle seule, elle, garde sa
+silhouette et sa feuille d'érable.
+
+| Source | 16 px | 32 px | 48 px |
+|---|---|---|---|
+| symbole complet | illisible | illisible | limite |
+| **épingle seule** | reconnaissable | **net** | **net** |
+
+Un léger masque flou-net (rayon 1,0 · 55 %) compense l'adoucissement du contour
+au rétrécissement, sans halo.
+
+| Fichier | Contenu |
+|---|---|
+| `src/app/favicon.ico` | 16 + 32 + 48 px dans un seul `.ico` — remplace l'icône Next.js (25 931 → 9 395 octets) |
+| `src/app/icon.png` | 256 px, transparent |
+| `src/app/apple-icon.png` | 180 px, composé sur `#0d0d0d` — iOS aplatit la transparence sur une tuile opaque, autant choisir la couleur nous-mêmes |
+
+### Open Graph
+
+`src/app/opengraph-image.jpg` et `src/app/twitter-image.jpg`, 1200 × 630, 70 KB
+chacun. Composés, pas capturés : fond `#0d0d0d`, la même aura orange et la même
+grille que `.brand-aura` / `.brand-grid`, le lockup officiel au centre, puis
+
+- `Assistance routière à la demande` — DM Sans 500
+- `Montréal & Rive-Sud` — Syne 800, dans la même pastille que les badges du hero
+
+Les deux lignes sont composées dans **les polices réelles du site** : les `.woff2`
+que `next/font` a téléchargés ont été convertis et instanciés à `wght=500` et
+`wght=800`. Aucune marque automobile tierce, aucun texte au-delà de ces deux
+lignes.
+
+`metadataBase` est désormais défini (`NEXT_PUBLIC_SITE_URL`, sinon
+`VERCEL_PROJECT_PRODUCTION_URL`, sinon localhost) — sans lui les URL d'images de
+partage restent relatives et aucun scraper ne les résout. Balises `twitter`
+ajoutées en `summary_large_image`.
+
+### Vérifié
+
+Servi par un vrai serveur, pas déduit du code :
+
+```
+/favicon.ico          200  image/x-icon    9 395 o
+/opengraph-image.jpg  200  image/jpeg     71 613 o
+/apple-icon.png       200  image/png      26 916 o
+```
+
+`<head>` rendu : `icon` 48×48 · `icon` 256×256 · `apple-touch-icon` 180×180 ·
+`og:image` + `og:image:width/height` 1200×630 · `twitter:card
+summary_large_image` + `twitter:image`.
+
+| Surface | 320 px | 375 px | 1280 px | images chargées |
+|---|---|---|---|---|
+| homepage déconnectée | ✅ | ✅ | ✅ | 4/4 |
+| homepage connectée (rôle chauffeur) | — | ✅ `navKids [139, 0, 107]` | ✅ | ✅ |
+| connexion | ✅ | ✅ | ✅ | 4/4 |
+| inscription | ✅ | ✅ | ✅ | 4/4 |
+| pied de page | ✅ | ✅ | ✅ | ✅ |
+
+Aucun débordement nulle part (`scrollW === clientW`, liste des éléments dépassant
+le viewport vide). La barre connectée est **plus étroite** qu'avec le wordmark
+typographique (139 px contre 153 px), donc le menu hamburger et les six liens
+chauffeur gardent leur place — vérifié en forçant `role='driver'` localement puis
+en annulant, sans aucune écriture en base.
+
+### Tests
+
+| Commande | Résultat |
+|---|---|
+| `npx tsc --noEmit` | ✅ |
+| `npm run lint` | ✅ |
+| `npm run build` | ✅ — 23 routes, dont `/icon.png`, `/apple-icon.png`, `/opengraph-image.jpg`, `/twitter-image.jpg` en statique |
+| `npm run test` | ✅ 30/30 |
+
+Rien touché côté auth, RLS, Stripe, Smart Dispatch, pricing, chauffeur ou admin.
+Aucune migration. Phase 6 non commencée.
+
+### Limitations restantes
+
+1. **La source est un WebP 1254² tramé, pas un vectoriel.** C'est la meilleure
+   version disponible — celle qui a transité par la conversation, possiblement
+   ré-encodée par le client. Tous les assets sont nets à leurs tailles d'usage,
+   mais si un master vectoriel ou un rendu plus grand existe, le déposer et
+   relancer la même découpe donnera de meilleurs résultats sur les très grands
+   formats.
+2. **L'arrangement horizontal de la barre est une mise en page, pas un lockup
+   officiel.** Si la marque en possède un, il le remplace.
+3. **Le logo contient une feuille d'érable.** Ce n'est pas une promesse de
+   couverture pancanadienne — c'est un signal d'entreprise canadienne, et il ne
+   contredit pas le repositionnement Montréal & Rive-Sud du §2. Signalé pour que
+   ce ne soit pas lu comme un oubli.
