@@ -40,7 +40,44 @@ export type DriverProfile = {
   current_lat: number | null;
   current_lng: number | null;
   last_heartbeat_at: string | null;
+  // Problem-type keys (PROBLEM_TYPES in constants.ts) this driver says they
+  // handle. Display-only as of Phase 5 — dispatch does not read this yet,
+  // see 0018_driver_service_types.sql.
+  service_types: string[];
+  // Set only alongside approval_status = 'rejected' by an admin — guarded
+  // the same way approval_status itself is (0019_driver_documents.sql).
+  rejection_reason: string | null;
+  // Prep for the future Business/company role. No UI writes this yet — see
+  // 0020_companies_prep.sql.
+  company_id: string | null;
   updated_at: string;
+};
+
+export type DriverDocumentType = 'license' | 'insurance' | 'registration' | 'other';
+export type DriverDocumentStatus = 'pending' | 'approved' | 'rejected' | 'expired';
+
+// Never written from the browser except a fresh, unreviewed insert — see the
+// trust-model note at the top of 0019_driver_documents.sql. Only an admin (or
+// the service role) can change `status`.
+export type DriverDocument = {
+  id: string;
+  driver_id: string;
+  type: DriverDocumentType;
+  storage_path: string;
+  status: DriverDocumentStatus;
+  rejection_reason: string | null;
+  expires_at: string | null;
+  uploaded_at: string;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+};
+
+// Prep-only (0020_companies_prep.sql) — no UI reads or writes this yet.
+export type Company = {
+  id: string;
+  name: string;
+  owner_id: string;
+  created_at: string;
 };
 
 export type NearbyDriverRow = {
@@ -320,6 +357,40 @@ export interface Database {
           {
             foreignKeyName: 'dispatch_offers_driver_id_fkey';
             columns: ['driver_id'];
+            isOneToOne: false;
+            referencedRelation: 'profiles';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      driver_documents: {
+        Row: DriverDocument;
+        // A driver may only insert a fresh, unreviewed row — see the WITH
+        // CHECK on "driver_documents: driver inserts own pending"
+        // (0019_driver_documents.sql). There is no UPDATE policy for a
+        // driver's own session at all.
+        Insert: Partial<DriverDocument> & { driver_id: string; type: DriverDocumentType; storage_path: string };
+        Update: Partial<DriverDocument>;
+        Relationships: [
+          {
+            foreignKeyName: 'driver_documents_driver_id_fkey';
+            columns: ['driver_id'];
+            isOneToOne: false;
+            referencedRelation: 'profiles';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      companies: {
+        Row: Company;
+        // No insert/update/delete policy for authenticated at all — prep
+        // only, see 0020_companies_prep.sql.
+        Insert: Partial<Company> & { name: string; owner_id: string };
+        Update: Partial<Company>;
+        Relationships: [
+          {
+            foreignKeyName: 'companies_owner_id_fkey';
+            columns: ['owner_id'];
             isOneToOne: false;
             referencedRelation: 'profiles';
             referencedColumns: ['id'];

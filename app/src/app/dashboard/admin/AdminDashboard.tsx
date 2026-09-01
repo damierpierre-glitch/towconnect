@@ -7,8 +7,16 @@ import { useToast } from '@/components/ToastProvider';
 import { Card, StatCard } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { approveDriver, rejectDriver } from '@/lib/actions/admin';
-import { problemLabel, VEHICLE_TYPE_LABEL } from '@/lib/constants';
+import { Textarea } from '@/components/ui/Field';
+import {
+  approveDriver,
+  getDriverDocumentSignedUrl,
+  listPendingDriverDocuments,
+  rejectDriver,
+  reviewDriverDocument,
+  type PendingDriverDocument,
+} from '@/lib/actions/admin';
+import { driverDocumentLabel, problemLabel, VEHICLE_TYPE_LABEL } from '@/lib/constants';
 import { toMoney } from '@/lib/pricing';
 import type { TowRequest } from '@/lib/supabase/types';
 
@@ -27,16 +35,19 @@ export function AdminDashboard() {
   const [provinceCounts, setProvinceCounts] = useState<{ province: string; count: number }[]>([]);
   const [liveRequests, setLiveRequests] = useState<TowRequest[]>([]);
   const [pendingDrivers, setPendingDrivers] = useState<PendingDriver[]>([]);
+  const [pendingDocuments, setPendingDocuments] = useState<PendingDriverDocument[]>([]);
   const [requestsToday, setRequestsToday] = useState(0);
   const [revenue, setRevenue] = useState(0);
   const [avgMinutes, setAvgMinutes] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [reasonBoxId, setReasonBoxId] = useState<string | null>(null);
+  const [reasonText, setReasonText] = useState('');
 
   useEffect(() => {
     const supabase = createClient();
 
     async function loadAll() {
-      const [driversRes, requestsRes, pendingRes, eventsRes] = await Promise.all([
+      const [driversRes, requestsRes, pendingRes, eventsRes, pendingDocsRes] = await Promise.all([
         supabase.from('driver_profiles').select('province, is_online, approval_status'),
         supabase.from('requests').select('*').order('created_at', { ascending: false }).limit(200),
         supabase
@@ -49,7 +60,9 @@ export function AdminDashboard() {
           .in('status', ['pending', 'matched'])
           .order('created_at', { ascending: true })
           .limit(1000),
+        listPendingDriverDocuments(),
       ]);
+      setPendingDocuments(pendingDocsRes);
 
       const drivers = driversRes.data ?? [];
       setActiveDrivers(drivers.filter((d) => d.is_online && d.approval_status === 'approved').length);
@@ -106,6 +119,7 @@ export function AdminDashboard() {
       .channel('admin-dashboard')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, loadAll)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_profiles' }, loadAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_documents' }, loadAll)
       .subscribe();
 
     return () => {
@@ -123,10 +137,35 @@ export function AdminDashboard() {
     }
   }
 
-  async function handleReject(id: string) {
+  function startReject(id: string) {
+    setReasonBoxId(id);
+    setReasonText('');
+  }
+
+  async function confirmReject(id: string) {
     try {
-      await rejectDriver(id);
+      await rejectDriver(id, reasonText);
       setPendingDrivers((prev) => prev.filter((d) => d.profile_id !== id));
+      setReasonBoxId(null);
+    } catch {
+      showToast('⚠️', t('error_generic'));
+    }
+  }
+
+  async function handleReviewDocument(documentId: string, status: 'approved' | 'rejected', reason?: string) {
+    try {
+      await reviewDriverDocument(documentId, status, reason);
+      setPendingDocuments((prev) => prev.filter((d) => d.id !== documentId));
+      showToast(status === 'approved' ? '✅' : '❌', lang === 'fr' ? 'Document mis à jour.' : 'Document updated.');
+    } catch {
+      showToast('⚠️', t('error_generic'));
+    }
+  }
+
+  async function handleViewDocument(storagePath: string) {
+    try {
+      const url = await getDriverDocumentSignedUrl(storagePath);
+      window.open(url, '_blank', 'noopener,noreferrer');
     } catch {
       showToast('⚠️', t('error_generic'));
     }
@@ -196,38 +235,133 @@ export function AdminDashboard() {
         </Card>
       </div>
 
-      <Card>
+      <Card className="mb-6">
         <h3 className="font-display text-base font-bold mb-4">{t('admin_pending_title')}</h3>
         {loading ? (
           <p className="text-sm text-muted">…</p>
         ) : pendingDrivers.length === 0 ? (
           <p className="text-sm text-muted">—</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <tbody>
-                {pendingDrivers.map((d) => (
-                  <tr key={d.profile_id} className="border-b border-steel/50 last:border-none">
-                    <td className="py-3 pr-3 font-medium">{d.name}</td>
-                    <td className="py-3 pr-3 text-text-2">🍁 {d.province}</td>
-                    <td className="py-3 pr-3 text-text-2">{VEHICLE_TYPE_LABEL[d.vehicle_type] ?? d.vehicle_type}</td>
-                    <td className="py-3">
-                      <div className="flex gap-2">
-                        <Button variant="green" className="!px-3 !py-1.5 text-xs" onClick={() => handleApprove(d.profile_id)}>
-                          ✓ {t('btn_approve')}
-                        </Button>
-                        <Button variant="secondary" className="!px-3 !py-1.5 text-xs" onClick={() => handleReject(d.profile_id)}>
-                          ✕ {t('btn_reject')}
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="flex flex-col gap-2">
+            {pendingDrivers.map((d) => (
+              <div key={d.profile_id} className="bg-night-3 border border-steel rounded-lg px-3.5 py-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <div className="font-medium text-sm">{d.name}</div>
+                    <div className="text-xs text-text-2 mt-0.5">
+                      🍁 {d.province} · {VEHICLE_TYPE_LABEL[d.vehicle_type] ?? d.vehicle_type}
+                    </div>
+                  </div>
+                  {reasonBoxId !== d.profile_id ? (
+                    <div className="flex gap-2">
+                      <Button variant="green" className="!px-3 !py-1.5 text-xs" onClick={() => handleApprove(d.profile_id)}>
+                        ✓ {t('btn_approve')}
+                      </Button>
+                      <Button variant="secondary" className="!px-3 !py-1.5 text-xs" onClick={() => startReject(d.profile_id)}>
+                        ✕ {t('btn_reject')}
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+                {reasonBoxId === d.profile_id ? (
+                  <div className="mt-3 flex flex-col gap-2">
+                    <Textarea
+                      placeholder={lang === 'fr' ? 'Motif du rejet (visible par le remorqueur)…' : 'Rejection reason (visible to the driver)…'}
+                      value={reasonText}
+                      onChange={(e) => setReasonText(e.target.value)}
+                    />
+                    <div className="flex gap-2">
+                      <Button variant="secondary" className="!px-3 !py-1.5 text-xs" onClick={() => setReasonBoxId(null)}>
+                        {lang === 'fr' ? 'Annuler' : 'Cancel'}
+                      </Button>
+                      <Button variant="red" className="!px-3 !py-1.5 text-xs" onClick={() => confirmReject(d.profile_id)}>
+                        {lang === 'fr' ? 'Confirmer le rejet' : 'Confirm rejection'}
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ))}
           </div>
         )}
       </Card>
+
+      <Card>
+        <h3 className="font-display text-base font-bold mb-1">{lang === 'fr' ? 'Documents en attente' : 'Pending documents'}</h3>
+        <p className="text-xs text-text-2 mb-4">
+          {lang === 'fr'
+            ? "Chaque document est examiné indépendamment — approuver ou rejeter un document ne change pas le statut du compte."
+            : "Each document is reviewed independently — approving or rejecting one doesn't change the account's own status."}
+        </p>
+        {loading ? (
+          <p className="text-sm text-muted">…</p>
+        ) : pendingDocuments.length === 0 ? (
+          <p className="text-sm text-muted">—</p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {pendingDocuments.map((doc) => (
+              <PendingDocumentRow key={doc.id} doc={doc} onView={handleViewDocument} onReview={handleReviewDocument} />
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function PendingDocumentRow({
+  doc,
+  onView,
+  onReview,
+}: {
+  doc: PendingDriverDocument;
+  onView: (storagePath: string) => void;
+  onReview: (documentId: string, status: 'approved' | 'rejected', reason?: string) => void;
+}) {
+  const { lang } = useLanguage();
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState('');
+
+  return (
+    <div className="bg-night-3 border border-steel rounded-lg px-3.5 py-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <div className="font-medium text-sm">{doc.driverName}</div>
+          <div className="text-xs text-text-2 mt-0.5">
+            {driverDocumentLabel(doc.type, lang)} · {new Date(doc.uploaded_at).toLocaleDateString(lang === 'fr' ? 'fr-CA' : 'en-CA')}
+          </div>
+        </div>
+        {!rejecting ? (
+          <div className="flex gap-2">
+            <Button variant="secondary" className="!px-3 !py-1.5 text-xs" onClick={() => onView(doc.storage_path)}>
+              👁️ {lang === 'fr' ? 'Voir' : 'View'}
+            </Button>
+            <Button variant="green" className="!px-3 !py-1.5 text-xs" onClick={() => onReview(doc.id, 'approved')}>
+              ✓ {lang === 'fr' ? 'Approuver' : 'Approve'}
+            </Button>
+            <Button variant="red" className="!px-3 !py-1.5 text-xs" onClick={() => setRejecting(true)}>
+              ✕ {lang === 'fr' ? 'Rejeter' : 'Reject'}
+            </Button>
+          </div>
+        ) : null}
+      </div>
+      {rejecting ? (
+        <div className="mt-3 flex flex-col gap-2">
+          <Textarea
+            placeholder={lang === 'fr' ? 'Motif du rejet (visible par le remorqueur)…' : 'Rejection reason (visible to the driver)…'}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+          <div className="flex gap-2">
+            <Button variant="secondary" className="!px-3 !py-1.5 text-xs" onClick={() => setRejecting(false)}>
+              {lang === 'fr' ? 'Annuler' : 'Cancel'}
+            </Button>
+            <Button variant="red" className="!px-3 !py-1.5 text-xs" onClick={() => onReview(doc.id, 'rejected', reason)}>
+              {lang === 'fr' ? 'Confirmer le rejet' : 'Confirm rejection'}
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

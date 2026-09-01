@@ -1423,6 +1423,222 @@ async function run(): Promise<Result[]> {
         detail: selfSetError ? undefined : `stripe_customer_id is now '${afterSelfSet?.stripe_customer_id}'`,
       });
     }
+
+    // ================================================================
+    // Phase 5 — driver documents (0019_driver_documents.sql)
+    //
+    // Same trust model as payments: a driver may see and add their own
+    // documents, but there is no UPDATE policy for a driver's own session at
+    // all, so "a driver approves their own document" isn't something to
+    // guard against, it's structurally absent. Cleans up every
+    // driver_documents / companies row it creates itself, immediately, via
+    // the service-role client — both companies.owner_id and
+    // driver_documents.reviewed_by reference profiles(id) WITHOUT
+    // on-delete-cascade, so leaving one pointed at a test user this suite is
+    // about to delete would fail that user's cleanup with a foreign-key
+    // violation and leak every user created after it in createdUserIds.
+    // ================================================================
+    {
+      const driverA = await createTestUser('driver');
+      createdUserIds.push(driverA.id);
+      const driverB = await createTestUser('driver');
+      createdUserIds.push(driverB.id);
+      const rider = await createTestUser('user');
+      createdUserIds.push(rider.id);
+      const adminUser = await createTestUser('user');
+      createdUserIds.push(adminUser.id);
+      await admin.from('profiles').update({ role: 'admin' }).eq('id', adminUser.id);
+
+      const documentIds: string[] = [];
+
+      const { data: insertedDoc, error: insertDocError } = await driverA.client
+        .from('driver_documents')
+        .insert({ driver_id: driverA.id, type: 'license', storage_path: `${driverA.id}/rls-test-license.jpg` })
+        .select('id')
+        .single();
+      if (insertedDoc) documentIds.push(insertedDoc.id);
+      results.push({
+        name: 'a driver can upload their own document as a fresh pending row',
+        pass: !insertDocError && Boolean(insertedDoc),
+        detail: insertDocError?.message,
+      });
+
+      const { error: bypassInsertError } = await driverA.client
+        .from('driver_documents')
+        .insert({ driver_id: driverA.id, type: 'insurance', storage_path: `${driverA.id}/rls-test-preapproved.jpg`, status: 'approved' });
+      results.push({
+        name: 'a driver cannot upload a document that arrives pre-approved',
+        pass: Boolean(bypassInsertError),
+        detail: bypassInsertError ? undefined : 'insert succeeded, expected the WITH CHECK to reject it',
+      });
+
+      if (insertedDoc) {
+        const { data: crossDriverRead } = await driverB.client.from('driver_documents').select('id').eq('id', insertedDoc.id);
+        results.push({
+          name: "a driver cannot read another driver's document",
+          pass: (crossDriverRead ?? []).length === 0,
+          detail: (crossDriverRead ?? []).length > 0 ? 'driver B read driver A document' : undefined,
+        });
+
+        const { data: riderRead } = await rider.client.from('driver_documents').select('id').eq('id', insertedDoc.id);
+        results.push({
+          name: "a rider cannot read a driver's document",
+          pass: (riderRead ?? []).length === 0,
+          detail: (riderRead ?? []).length > 0 ? 'rider read a driver document' : undefined,
+        });
+
+        // No UPDATE policy at all means Postgres RLS filters the target row
+        // to zero matches rather than raising an error — the same
+        // "succeeds, but affects nothing" shape as the dispatch_offers
+        // rider-update test above. The only real signal is the row itself.
+        await driverA.client.from('driver_documents').update({ status: 'approved' }).eq('id', insertedDoc.id);
+        const { data: afterSelfApprove } = await admin.from('driver_documents').select('status').eq('id', insertedDoc.id).single();
+        results.push({
+          name: "a driver's self-approval attempt has no effect (no UPDATE policy at all)",
+          pass: afterSelfApprove?.status === 'pending',
+          detail: afterSelfApprove?.status !== 'pending' ? `status is now '${afterSelfApprove?.status}', expected it unchanged` : undefined,
+        });
+
+        const { data: adminReview, error: adminReviewError } = await adminUser.client
+          .from('driver_documents')
+          .update({ status: 'approved', reviewed_at: new Date().toISOString(), reviewed_by: adminUser.id })
+          .eq('id', insertedDoc.id)
+          .select('status')
+          .single();
+        results.push({
+          name: 'an admin (real admin-role session) can review a driver document',
+          pass: !adminReviewError && adminReview?.status === 'approved',
+          detail: adminReviewError?.message ?? `status is '${adminReview?.status}', expected 'approved'`,
+        });
+
+        // Same shape again: DELETE under a USING clause that doesn't match
+        // returns success with zero rows deleted, not an error. Verified by
+        // hand against a live project before trusting this pattern here —
+        // a `{success:true,data:[]}` 200 response with the row provably
+        // still present, not a client-visible rejection.
+        await driverA.client.from('driver_documents').delete().eq('id', insertedDoc.id);
+        const { data: stillThere } = await admin.from('driver_documents').select('id').eq('id', insertedDoc.id).maybeSingle();
+        results.push({
+          name: "a driver's attempt to delete their own approved document has no effect",
+          pass: Boolean(stillThere),
+          detail: stillThere ? undefined : 'the approved document row is gone',
+        });
+      }
+
+      const { data: secondDoc, error: secondDocError } = await driverA.client
+        .from('driver_documents')
+        .insert({ driver_id: driverA.id, type: 'registration', storage_path: `${driverA.id}/rls-test-registration.jpg` })
+        .select('id')
+        .single();
+      if (secondDoc) documentIds.push(secondDoc.id);
+      if (!secondDocError && secondDoc) {
+        const { error: deletePendingError } = await driverA.client.from('driver_documents').delete().eq('id', secondDoc.id);
+        results.push({
+          name: 'a driver can delete their own non-approved document',
+          pass: !deletePendingError,
+          detail: deletePendingError?.message,
+        });
+        if (!deletePendingError) documentIds.splice(documentIds.indexOf(secondDoc.id), 1);
+      }
+
+      // ---- driver_profiles: rejection_reason and company_id are guarded
+      //      the same way approval_status/rating/total_services already are
+      //      (0019, 0020 extend the same trigger function) ----
+      const { error: selfRejectionError } = await driverA.client
+        .from('driver_profiles')
+        .update({ rejection_reason: 'self-authored excuse' })
+        .eq('profile_id', driverA.id);
+      const { data: afterSelfRejection } = await admin.from('driver_profiles').select('rejection_reason').eq('profile_id', driverA.id).single();
+      results.push({
+        name: 'a driver cannot set their own rejection_reason',
+        pass: Boolean(selfRejectionError) && afterSelfRejection?.rejection_reason == null,
+        detail: selfRejectionError ? undefined : `rejection_reason is now '${afterSelfRejection?.rejection_reason}'`,
+      });
+
+      // ---- companies (0020_companies_prep.sql) ----
+      const { data: company, error: companyInsertError } = await admin
+        .from('companies')
+        .insert({ name: 'RLS Test Towing Co.', owner_id: driverA.id })
+        .select('id')
+        .single();
+
+      if (company) {
+        const { error: selfCompanyIdError } = await driverA.client.from('driver_profiles').update({ company_id: company.id }).eq('profile_id', driverA.id);
+        const { data: afterSelfCompanyId } = await admin.from('driver_profiles').select('company_id').eq('profile_id', driverA.id).single();
+        results.push({
+          name: 'a driver cannot set their own company_id',
+          pass: Boolean(selfCompanyIdError) && afterSelfCompanyId?.company_id == null,
+          detail: selfCompanyIdError ? undefined : `company_id is now '${afterSelfCompanyId?.company_id}'`,
+        });
+
+        const { data: ownerRead } = await driverA.client.from('companies').select('id').eq('id', company.id).maybeSingle();
+        results.push({
+          name: "a company's owner can read their own company row",
+          pass: ownerRead?.id === company.id,
+          detail: ownerRead ? undefined : 'owner session read no row',
+        });
+
+        const { data: strangerRead } = await driverB.client.from('companies').select('id').eq('id', company.id);
+        results.push({
+          name: "a company is not readable by an account that doesn't own it",
+          pass: (strangerRead ?? []).length === 0,
+          detail: (strangerRead ?? []).length > 0 ? 'a non-owner read the company row' : undefined,
+        });
+
+        const { error: driverCreateCompanyError } = await driverB.client.from('companies').insert({ name: 'Rogue Co.', owner_id: driverB.id });
+        results.push({
+          name: 'a driver cannot create a company directly (no INSERT policy at all)',
+          pass: Boolean(driverCreateCompanyError),
+          detail: driverCreateCompanyError ? undefined : 'insert succeeded, expected an RLS rejection',
+        });
+
+        await admin.from('companies').delete().eq('id', company.id);
+      } else {
+        results.push({ name: 'setup: create a company row (service role)', pass: false, detail: companyInsertError?.message });
+      }
+
+      // Explicit cleanup before this block's users are deleted — see the
+      // comment at the top of this section for why this can't wait for the
+      // generic per-user cleanup below.
+      if (documentIds.length > 0) {
+        await admin.from('driver_documents').delete().in('id', documentIds);
+      }
+    }
+
+    // ================================================================
+    // Phase 5 — an unapproved driver is never quotable, not just never
+    // dispatchable. nearby_drivers() already filters on approval_status =
+    // 'approved' (0002_hardening.sql); this pins that specific guarantee
+    // with its own test rather than relying on it being incidentally true
+    // in the dispatch tests above.
+    // ================================================================
+    {
+      const requester = await createTestUser('user');
+      createdUserIds.push(requester.id);
+      const unapprovedDriver = await createTestUser('driver');
+      createdUserIds.push(unapprovedDriver.id);
+      // Deliberately not using makeApprovedDriver() — approval_status stays
+      // at its default 'pending' while everything else about this driver
+      // (online, positioned, fresh heartbeat) looks exactly like a
+      // dispatchable one.
+      await admin
+        .from('driver_profiles')
+        .update({ is_online: true, current_lat: MTL.lat, current_lng: MTL.lng, last_heartbeat_at: new Date().toISOString() })
+        .eq('profile_id', unapprovedDriver.id);
+
+      const { data: quoted } = await requester.client.rpc('nearby_drivers', {
+        p_lat: MTL.lat,
+        p_lng: MTL.lng,
+        p_radius_km: 15,
+        p_limit: 10,
+      });
+      const unapprovedQuoted = (quoted ?? []).some((d: { profile_id: string }) => d.profile_id === unapprovedDriver.id);
+      results.push({
+        name: 'nearby_drivers() excludes an unapproved driver even when online with a fresh heartbeat',
+        pass: !unapprovedQuoted,
+        detail: unapprovedQuoted ? 'unapproved driver was returned and would have priced/dispatched the quote' : undefined,
+      });
+    }
   } finally {
     for (const id of createdUserIds) {
       await deleteTestUser(id);

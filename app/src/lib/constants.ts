@@ -32,6 +32,23 @@ export const VEHICLE_TYPE_LABEL: Record<string, string> = {
   heavy_duty: 'Heavy Duty',
 };
 
+// Document types a driver's application can be verified against. Kept short
+// on purpose — these are the ones a Canadian tow operator's paperwork
+// actually breaks down into; 'other' covers anything province-specific
+// without needing a new enum value for every province's quirk.
+export const DRIVER_DOCUMENT_TYPES: { key: import('./supabase/types').DriverDocumentType; icon: string; fr: string; en: string }[] = [
+  { key: 'license', icon: '🪪', fr: 'Permis de conduire', en: "Driver's license" },
+  { key: 'insurance', icon: '🛡️', fr: 'Assurance', en: 'Insurance' },
+  { key: 'registration', icon: '📋', fr: 'Immatriculation', en: 'Registration' },
+  { key: 'other', icon: '📄', fr: 'Autre document', en: 'Other document' },
+];
+
+export function driverDocumentLabel(type: string, lang: 'fr' | 'en') {
+  const d = DRIVER_DOCUMENT_TYPES.find((d) => d.key === type);
+  if (!d) return type;
+  return `${d.icon} ${lang === 'fr' ? d.fr : d.en}`;
+}
+
 // Fallback center (downtown Montreal) used when Mapbox geocoding isn't
 // configured, so the demo still works end-to-end without an API key.
 export const FALLBACK_CENTER = { lat: 45.5019, lng: -73.5674 };

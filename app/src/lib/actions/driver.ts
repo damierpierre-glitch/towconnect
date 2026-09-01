@@ -9,6 +9,8 @@ export async function updateDriverInfo(input: {
   vehicleType: VehicleType;
   province: string;
   licensePlate: string;
+  phone?: string;
+  serviceTypes?: string[];
 }) {
   const supabase = await createClient();
   const {
@@ -22,11 +24,22 @@ export async function updateDriverInfo(input: {
       vehicle_type: input.vehicleType,
       province: input.province,
       license_plate: input.licensePlate,
+      ...(input.serviceTypes ? { service_types: input.serviceTypes } : {}),
       updated_at: new Date().toISOString(),
     })
     .eq('profile_id', user.id);
   if (error) throw error;
+
+  // profiles.phone lives on a different table (shared with the rider role) —
+  // a separate write, same session, same "profiles: update own" policy
+  // (0001_init.sql) every account already has.
+  if (input.phone !== undefined) {
+    const { error: phoneError } = await supabase.from('profiles').update({ phone: input.phone || null }).eq('id', user.id);
+    if (phoneError) throw phoneError;
+  }
+
   revalidatePath('/dashboard/driver');
+  revalidatePath('/dashboard/driver/profile');
 }
 
 export async function toggleOnline(isOnline: boolean) {
@@ -44,18 +57,23 @@ export async function toggleOnline(isOnline: boolean) {
   revalidatePath('/dashboard/driver');
 }
 
-export async function updateDriverLocation(lat: number, lng: number) {
+// Returns whether the write actually landed instead of swallowing the
+// result, so the dashboard can distinguish "GPS worked, the network didn't"
+// from silence — see the online/offline UX notes in
+// TOWCONNECT_PHASE5_REPORT.md.
+export async function updateDriverLocation(lat: number, lng: number): Promise<{ ok: boolean }> {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
+  if (!user) return { ok: false };
 
   const now = new Date().toISOString();
-  await supabase
+  const { error } = await supabase
     .from('driver_profiles')
     .update({ current_lat: lat, current_lng: lng, last_heartbeat_at: now, updated_at: now })
     .eq('profile_id', user.id);
+  return { ok: !error };
 }
 
 // Goes through respond_to_dispatch_offer() (SECURITY DEFINER), which itself
