@@ -75,6 +75,7 @@ async function main() {
   const userIds: string[] = [];
   const requestIds: string[] = [];
   let intentId: string | null = null;
+  let scaIntentId: string | null = null;
 
   // The endpoint has to be reachable and refuse unsigned bodies before any of
   // the rest means anything.
@@ -91,6 +92,12 @@ async function main() {
     body: JSON.stringify({ id: 'evt_forged2', type: 'payment_intent.succeeded' }),
   });
   check('deployed endpoint rejects a forged signature', forged.status === 400, `HTTP ${forged.status}`);
+
+  const { count: failedEventCount } = await admin
+    .from('stripe_webhook_events')
+    .select('stripe_event_id', { count: 'exact', head: true })
+    .eq('type', 'payment_intent.payment_failed');
+  const scaFailedEventsBefore = failedEventCount ?? 0;
 
   try {
     const { data: userData, error: userError } = await admin.auth.admin.createUser({
@@ -160,6 +167,54 @@ async function main() {
       `amount_capturable_updated rows in ledger=${count ?? 0}`
     );
 
+    // A card that demands 3D Secure. Stripe reports this as
+    // payment_intent.payment_failed with last_payment_error.code =
+    // 'authentication_required' - which the webhook used to record as a flat
+    // 'failed', overwriting the 'requires_action' the app had just written
+    // correctly and telling the rider their payment had died while the
+    // challenge was still on their screen. Asserted remotely because only the
+    // deployed route can prove it.
+    const scaIntent = await stripe.paymentIntents.create({
+      amount: 4596,
+      currency: 'cad',
+      capture_method: 'manual',
+      customer: (await stripe.customers.create({ metadata: { towconnect_purpose: 'sca webhook verification' } })).id,
+      payment_method: (await stripe.paymentMethods.create({ type: 'card', card: { token: 'tok_threeDSecure2Required' } })).id,
+      automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
+      metadata: { towconnect_purpose: 'sca webhook verification' },
+    });
+    scaIntentId = scaIntent.id;
+
+    const { error: scaPaymentError } = await admin.from('payments').insert({
+      request_id: requestId,
+      stripe_payment_intent_id: scaIntent.id,
+      amount: 45.96,
+      currency: 'cad',
+      status: 'requires_action',
+    });
+    if (scaPaymentError) throw new Error(`setup: could not record SCA payment: ${scaPaymentError.message}`);
+
+    await stripe.paymentIntents.confirm(scaIntent.id).catch(() => {});
+
+    // Give the delivery time to land, then assert it did NOT become 'failed'.
+    const scaSettled = await waitFor(
+      'the SCA webhook',
+      async () => {
+        const { count } = await admin
+          .from('stripe_webhook_events')
+          .select('stripe_event_id', { count: 'exact', head: true })
+          .eq('type', 'payment_intent.payment_failed');
+        return (count ?? 0) > scaFailedEventsBefore;
+      },
+      90_000
+    );
+    const scaStatus = await paymentStatus(scaIntent.id);
+    check(
+      'an SCA challenge is recorded as requires_action, never as failed',
+      scaSettled && scaStatus === 'requires_action',
+      `delivered=${scaSettled} status=${scaStatus}`
+    );
+
     // Release the hold. This also exercises a second event type over the same
     // remote path, and leaves no authorization outstanding on the card.
     await stripe.paymentIntents.cancel(intent.id);
@@ -170,12 +225,12 @@ async function main() {
       `status=${await paymentStatus(intent.id)}`
     );
   } finally {
-    if (intentId) {
-      const current = await stripe.paymentIntents.retrieve(intentId).catch(() => null);
+    for (const id of [intentId, scaIntentId].filter((v): v is string => v != null)) {
+      const current = await stripe.paymentIntents.retrieve(id).catch(() => null);
       // Never leave a hold on a card because a check failed part way through.
       const open = ['requires_capture', 'requires_confirmation', 'requires_action', 'requires_payment_method'];
       if (current && open.includes(current.status)) {
-        await stripe.paymentIntents.cancel(intentId).catch(() => {});
+        await stripe.paymentIntents.cancel(id).catch(() => {});
       }
     }
     for (const id of requestIds) {

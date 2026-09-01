@@ -3,6 +3,7 @@ import Stripe from 'stripe';
 import { getStripe, isStripeConfigured } from '@/lib/stripe/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import type { PaymentStatus } from '@/lib/supabase/types';
+import { isAuthenticationRequired } from '@/lib/stripe/payment-status';
 
 // Stripe is the source of truth for payment state — this webhook is the
 // only thing that gets to call a payment truly settled. The optimistic
@@ -77,6 +78,26 @@ async function handleEvent(event: Stripe.Event, admin: ReturnType<typeof createA
     case 'payment_intent.payment_failed': {
       const intent = event.data.object as Stripe.PaymentIntent;
       const reason = intent.last_payment_error?.code ?? intent.last_payment_error?.decline_code ?? 'failed';
+
+      if (isAuthenticationRequired(reason)) {
+        // Not a decline. Stripe reports an off-session confirmation that
+        // needs SCA as payment_intent.payment_failed with this code, leaving
+        // the intent at 'requires_payment_method' - while the customer is
+        // looking at the 3D Secure challenge and can still complete it.
+        //
+        // Recording 'failed' here overwrote the 'requires_action' that
+        // createRequest() had correctly just written, so the rider was told
+        // their payment had failed mid-challenge and support saw a dead
+        // payment that was actually live. This is the same misreading the
+        // app-side path was fixed for in Phase 4 - the webhook half, which
+        // deliberately wins over every optimistic write, was missed.
+        await admin
+          .from('payments')
+          .update({ status: 'requires_action' satisfies PaymentStatus, failure_reason: null })
+          .eq('stripe_payment_intent_id', intent.id);
+        break;
+      }
+
       await admin
         .from('payments')
         .update({ status: 'failed' satisfies PaymentStatus, failure_reason: reason })
