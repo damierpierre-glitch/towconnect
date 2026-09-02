@@ -665,6 +665,108 @@ export type DriverOpsRow = {
   openIncidents: number;
 };
 
+
+// ---------------------------------------------------------------- Phase 9:
+// safety sharing, notifications, exports.
+export type SafetyLink = {
+  id: string;
+  request_id: string;
+  // The SHA-256 of the token. The token itself is never stored, so this row
+  // cannot be turned back into a working link.
+  token_hash: string;
+  created_by: string;
+  created_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+  revoked_by: string | null;
+  view_count: number;
+  last_viewed_at: string | null;
+};
+
+/**
+ * Everything a Safety Link can ever show. This IS the public surface: the
+ * database function selects these fields and nothing else, so no phone
+ * number, no money, no saved address and no internal note can leak through it.
+ */
+export type SafetyLinkView = {
+  status: string;
+  operational_state: string;
+  pickup_lat: number;
+  pickup_lng: number;
+  destination_address: string | null;
+  destination_lat: number | null;
+  destination_lng: number | null;
+  problem_type: string;
+  driver_first_name: string | null;
+  driver_lat: number | null;
+  driver_lng: number | null;
+  // How old the driver's position is. Shown rather than hidden: a stale point
+  // presented as current is a lie the map tells silently.
+  driver_location_age_seconds: number | null;
+  company_name: string | null;
+  vehicle_type: string | null;
+  license_plate: string | null;
+  regulated_state: string | null;
+  created_at: string;
+  expires_at: string;
+};
+
+export type TrustedContact = {
+  id: string;
+  profile_id: string;
+  label: string;
+  phone: string | null;
+  email: string | null;
+  created_at: string;
+};
+
+export type NotificationType =
+  | 'driver_found'
+  | 'driver_en_route'
+  | 'driver_arrived'
+  | 'job_in_progress'
+  | 'job_completed'
+  | 'job_cancelled'
+  | 'message_received'
+  | 'supplement_proposed'
+  | 'supplement_needs_authentication'
+  | 'payment_action_required'
+  | 'refund_issued';
+
+export type NotificationCategory = 'job_progress' | 'messages' | 'payment' | 'account';
+
+export type AppNotification = {
+  id: number;
+  recipient_id: string;
+  type: NotificationType;
+  category: NotificationCategory;
+  request_id: string | null;
+  // Facts the renderer needs, never a finished sentence — so the same event
+  // reads in each person's own language.
+  payload: Record<string, unknown>;
+  read_at: string | null;
+  created_at: string;
+};
+
+export type NotificationPreference = {
+  profile_id: string;
+  category: NotificationCategory;
+  in_app: boolean;
+  push: boolean;
+  updated_at: string;
+};
+
+export type ExportAuditEntry = {
+  id: number;
+  actor_id: string | null;
+  capability: AdminCapability;
+  dataset: string;
+  format: 'csv' | 'xlsx';
+  filters: Record<string, unknown>;
+  row_count: number;
+  created_at: string;
+};
+
 export type NearbyDriverRow = {
   profile_id: string;
   full_name: string;
@@ -985,6 +1087,43 @@ export interface Database {
             referencedColumns: ['id'];
           },
         ];
+      };
+      safety_links: {
+        Row: SafetyLink;
+        Insert: Partial<SafetyLink> & { request_id: string; token_hash: string; created_by: string; expires_at: string };
+        Update: Partial<SafetyLink>;
+        Relationships: [];
+      };
+      trusted_contacts: {
+        Row: TrustedContact;
+        Insert: Partial<TrustedContact> & { profile_id: string; label: string };
+        Update: Partial<TrustedContact>;
+        Relationships: [];
+      };
+      notifications: {
+        Row: AppNotification;
+        // Written by triggers and trusted server code only — there is no
+        // INSERT policy, so nobody can put a message in someone else's inbox.
+        Insert: never;
+        Update: Partial<Pick<AppNotification, 'read_at'>>;
+        Relationships: [];
+      };
+      notification_preferences: {
+        Row: NotificationPreference;
+        Insert: Partial<NotificationPreference> & { profile_id: string; category: NotificationCategory };
+        Update: Partial<NotificationPreference>;
+        Relationships: [];
+      };
+      export_audit: {
+        Row: ExportAuditEntry;
+        Insert: Partial<ExportAuditEntry> & {
+          capability: AdminCapability;
+          dataset: string;
+          format: 'csv' | 'xlsx';
+          row_count: number;
+        };
+        Update: never;
+        Relationships: [];
       };
       admin_grants: {
         Row: AdminGrant;
@@ -1390,6 +1529,28 @@ export interface Database {
       has_admin_capability: {
         Args: { p_capability: AdminCapability };
         Returns: boolean;
+      };
+      safety_link_view: {
+        Args: { p_token: string };
+        Returns: SafetyLinkView[];
+      };
+      notify_user: {
+        Args: {
+          p_recipient: string;
+          p_type: NotificationType;
+          p_category: NotificationCategory;
+          p_request_id: string | null;
+          p_payload: Record<string, unknown>;
+        };
+        Returns: undefined;
+      };
+      ops_super_admin_count: {
+        Args: Record<string, never>;
+        Returns: number;
+      };
+      ops_threshold_drift: {
+        Args: Record<string, never>;
+        Returns: { key: string; stored_seconds: number; engine_seconds: number }[];
       };
       ops_attention_queue: {
         Args: Record<string, never>;

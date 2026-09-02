@@ -14,6 +14,7 @@ import { StatusTracker } from '@/components/StatusTracker';
 import { Chat } from '@/components/Chat';
 import { RegulatedZoneNotice, RestrictedCapacityNotice, useRegulatedZone } from '@/components/RegulatedZoneNotice';
 import { SupplementsPanel } from '@/components/SupplementsPanel';
+import { SafetyLinkPanel } from '@/components/SafetyLinkPanel';
 import type { RegulatedDispatchState, RequestStatus } from '@/lib/supabase/types';
 
 interface DriverInfo {
@@ -372,6 +373,11 @@ export function StepTracking({
           the customer holding the only accept button. Nothing is added to
           what they pay until they press it. */}
       <SupplementsPanel requestId={requestId} role="customer" basePrice={price ?? undefined} />
+
+      {/* Sharing is offered only while there is something to watch. This
+          screen only ever renders an active job, so the link is always
+          meaningful here. */}
+      <SafetyLinkPanel requestId={requestId} />
 
       <div className="grid grid-cols-2 gap-3 mb-5">
         <div className="text-center">

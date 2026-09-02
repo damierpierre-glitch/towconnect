@@ -3566,6 +3566,114 @@ async function run(): Promise<Result[]> {
         detail: 'nobody can grant capabilities any more',
       });
 
+      // ================================================================
+      // Phase 9 — sharing, notifications and exports. The dedicated suites
+      // (test:safety, test:exports) go deep; these are the cross-role
+      // invariants that belong beside every other RLS assertion.
+      // ================================================================
+      const { data: safetyLink } = await admin
+        .from('safety_links')
+        .insert({
+          request_id: jobA,
+          token_hash: 'a'.repeat(64),
+          created_by: rider.id,
+          expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        } as never)
+        .select('id')
+        .single();
+
+      const { data: driverSeesLink } = await driverA.client
+        .from('safety_links')
+        .select('id')
+        .eq('id', safetyLink!.id)
+        .maybeSingle();
+      const { data: ownerSeesLink } = await ownerA.client
+        .from('safety_links')
+        .select('id')
+        .eq('id', safetyLink!.id)
+        .maybeSingle();
+      results.push({
+        name: "a driver cannot read the customer's safety link",
+        pass: driverSeesLink == null,
+        detail: 'the assigned driver read the share token row',
+      });
+      results.push({
+        name: 'a company owner cannot read a safety link',
+        pass: ownerSeesLink == null,
+        detail: 'a company read a customer share token row',
+      });
+
+      // The token is the credential, so the row must never contain it.
+      const { data: storedLink } = await admin
+        .from('safety_links')
+        .select('token_hash')
+        .eq('id', safetyLink!.id)
+        .single();
+      results.push({
+        name: 'a safety link stores a hash, never a usable token',
+        pass: /^[0-9a-f]{64}$/.test(storedLink!.token_hash),
+        detail: 'a plaintext token would make reading the table equal to holding every link',
+      });
+
+      // Notifications belong to exactly one person.
+      await admin.from('requests').update({ status: 'en_route' }).eq('id', jobA);
+      const { data: riderInbox } = await rider.client.from('notifications').select('id, recipient_id');
+      const { data: driverInbox } = await driverA.client.from('notifications').select('id, recipient_id');
+      results.push({
+        name: 'a customer reads only their own notifications',
+        pass: (riderInbox ?? []).every((n) => n.recipient_id === rider.id),
+        detail: "a notification belonging to somebody else was readable",
+      });
+      results.push({
+        name: 'a driver reads only their own notifications',
+        pass: (driverInbox ?? []).every((n) => n.recipient_id === driverA.id),
+        detail: "a notification belonging to somebody else was readable",
+      });
+
+      const { error: forgeNotification } = await driverA.client.from('notifications').insert({
+        recipient_id: rider.id,
+        type: 'driver_arrived',
+        category: 'job_progress',
+        request_id: jobA,
+      } as never);
+      results.push({
+        name: "nobody can put a notification in somebody else's inbox",
+        pass: Boolean(forgeNotification),
+        detail: 'a driver wrote into a customer notification feed',
+      });
+
+      // Who exported what is itself sensitive.
+      await admin.from('export_audit').insert({
+        actor_id: opsAdmin.id,
+        capability: 'operations',
+        dataset: 'requests',
+        format: 'csv',
+        row_count: 1,
+      } as never);
+      const { data: opsSeesAudit } = await opsAdmin.client.from('export_audit').select('id');
+      const { data: supportSeesAudit } = await supportAdmin.client.from('export_audit').select('id');
+      results.push({
+        name: 'only a super admin reads the export log',
+        pass: (opsSeesAudit ?? []).length === 0 && (supportSeesAudit ?? []).length === 0,
+        detail: 'a scoped admin read who exported what',
+      });
+
+      const { error: forgeAudit } = await opsAdmin.client.from('export_audit').insert({
+        actor_id: opsAdmin.id,
+        capability: 'operations',
+        dataset: 'requests',
+        format: 'csv',
+        row_count: 999,
+      } as never);
+      results.push({
+        name: 'nobody can write their own line into the export log',
+        pass: Boolean(forgeAudit),
+        detail: 'an admin fabricated an export audit entry',
+      });
+
+      await admin.from('export_audit').delete().eq('actor_id', opsAdmin.id);
+      await admin.from('safety_links').delete().eq('request_id', jobA);
+
       await admin.from('risk_flags').delete().eq('id', flagRow!.id);
       await admin.from('operational_incidents').delete().eq('id', incidentRow!.id);
       await admin.from('pricing_configs').delete().in('version', [90001, 90002]);

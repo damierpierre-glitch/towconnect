@@ -30,6 +30,14 @@ export function OperationsNav({ capabilities }: { capabilities: Capabilities }) 
     { href: '/dashboard/admin/operations/directory', fr: 'Flotte', en: 'Fleet', show: capabilities.operations },
     { href: '/dashboard/admin/operations/zones', fr: 'Zones', en: 'Zones', show: capabilities.operations },
     { href: '/dashboard/admin/operations/support', fr: 'Support', en: 'Support', show: capabilities.support || capabilities.operations },
+    {
+      href: '/dashboard/admin/operations/exports',
+      fr: 'Exports',
+      en: 'Exports',
+      // Shown to anybody with a capability, because each one can export its
+      // own domain and nothing else.
+      show: capabilities.operations || capabilities.finance || capabilities.support || capabilities.superAdmin,
+    },
     { href: '/dashboard/admin/operations/access', fr: 'Accès', en: 'Access', show: capabilities.superAdmin },
   ];
 

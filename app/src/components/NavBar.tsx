@@ -27,6 +27,7 @@ interface SubLink {
 }
 
 const userSubLinks: SubLink[] = [
+  { href: '/notifications', icon: '🔔', fr: 'Notifications', en: 'Notifications' },
   { href: '/vehicles', icon: '🚗', fr: 'Mes véhicules', en: 'My vehicles' },
   { href: '/history', icon: '🧾', fr: 'Historique', en: 'History' },
   { href: '/payment-methods', icon: '💳', fr: 'Paiement', en: 'Payment' },
@@ -59,7 +60,17 @@ const adminSubLinks: SubLink[] = [
   { href: '/dashboard/admin/finance', icon: '💵', fr: 'Finance', en: 'Finance' },
 ];
 
+// Phase 9. Both a customer and a driver receive notifications about the same
+// rescue, so the entry belongs to both.
+const notificationsLink: SubLink = {
+  href: '/notifications',
+  icon: '🔔',
+  fr: 'Notifications',
+  en: 'Notifications',
+};
+
 const driverSubLinks: SubLink[] = [
+  notificationsLink,
   { href: '/dashboard/driver/profile', icon: '🪪', fr: 'Profil', en: 'Profile' },
   { href: '/dashboard/driver/documents', icon: '📄', fr: 'Documents', en: 'Documents' },
   { href: '/dashboard/driver/earnings', icon: '💰', fr: 'Revenus', en: 'Earnings' },
