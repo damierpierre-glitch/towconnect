@@ -6,6 +6,7 @@ import { ACTIVE_REQUEST_STATUSES, type PaymentStatus, type TowRequest } from '@/
 import { distanceKm, estimatePriceBreakdown } from '@/lib/pricing';
 import { problemRequiresDestination } from '@/lib/constants';
 import { authorizeRequestPayment, cancelRequestPayment, finalizeAuthorization, isStripeConfigured } from '@/lib/actions/payments';
+import { settleCancellationEconomics } from '@/lib/actions/finance';
 
 export interface CreateRequestInput {
   problemType: string;
@@ -201,22 +202,48 @@ export async function reassignDriver(requestId: string, driverId: string) {
 
 export async function cancelRequest(requestId: string) {
   const supabase = await createClient();
+
+  // Read the status BEFORE cancelling: whether a driver had already been
+  // matched is what decides the economics, and once the row says 'cancelled'
+  // that fact is gone.
+  const { data: before } = await supabase
+    .from('requests')
+    .select('status, driver_id')
+    .eq('id', requestId)
+    .maybeSingle();
+  const stage: 'before_match' | 'after_match' =
+    before?.driver_id && before.status !== 'pending' ? 'after_match' : 'before_match';
+
   const { error } = await supabase
     .from('requests')
     .update({ status: 'cancelled' })
     .eq('id', requestId);
   if (error) throw error;
 
+  // A cancellation after a driver was already on their way may carry a fee and
+  // a compensation — but only if a cancellation policy has actually been
+  // configured. When none has, nothing is charged and nothing is recorded.
+  let feeCaptured = false;
+  try {
+    ({ feeCaptured } = await settleCancellationEconomics(requestId, stage));
+  } catch {
+    // Falls through to releasing the hold, which is the customer-favourable
+    // outcome and the right way to fail.
+  }
+
   // Release the authorization hold. Cancelling used to leave the
   // PaymentIntent at requires_capture, so the rider's card stayed encumbered
-  // for days and the payments row never reconciled. Best-effort: a payment
-  // problem must not stop the rider from cancelling — the cancellation
-  // itself already succeeded above.
-  try {
-    await cancelRequestPayment(requestId);
-  } catch {
-    // Swallowed on purpose — see comment above. The webhook remains the
-    // authority on the payment's real end state.
+  // for days and the payments row never reconciled. Skipped when a
+  // cancellation fee was captured from that same authorization — capturing and
+  // cancelling one hold are mutually exclusive. Best-effort otherwise: a
+  // payment problem must not stop the rider from cancelling.
+  if (!feeCaptured) {
+    try {
+      await cancelRequestPayment(requestId);
+    } catch {
+      // Swallowed on purpose — see comment above. The webhook remains the
+      // authority on the payment's real end state.
+    }
   }
 
   revalidatePath('/request');

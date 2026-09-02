@@ -95,6 +95,16 @@ export type Company = {
   email: string | null;
   province: string | null;
   address: string | null;
+  // Phase 7. Stripe's own answers about the account, never written from a
+  // browser — a trigger (0034) refuses it. No bank, card or KYC data is
+  // stored: onboarding happens on Stripe's hosted flow.
+  stripe_account_id: string | null;
+  connect_status: ConnectOnboardingStatus;
+  connect_charges_enabled: boolean;
+  connect_payouts_enabled: boolean;
+  connect_requirements_due: string[];
+  connect_disabled_reason: string | null;
+  connect_updated_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -299,6 +309,12 @@ export type RequestSupplement = {
   status: SupplementStatus;
   proposed_by: string;
   responded_at: string | null;
+  // Phase 7. Approval is a promise; this is whether the money was secured.
+  // Written only by the platform (0037 trigger) — a driver who could set this
+  // to 'settled' would be crediting their own ledger.
+  payment_state: 'pending' | 'authorized' | 'uncollected' | 'settled';
+  payment_note: string | null;
+  payment_settled_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -333,6 +349,111 @@ export type DispatchCandidateExplanation = {
   preferred_partner: boolean;
   effective_rating: number;
   score: number;
+};
+
+
+// ---------------------------------------------------------------- Phase 7:
+// monetization. Every money field is nullable and ships NULL: no commission
+// rate has been decided, and a zero would read as one.
+export type PricingConfigStatus = 'draft' | 'active' | 'archived';
+
+export type PricingConfig = {
+  id: string;
+  version: number;
+  label: string;
+  status: PricingConfigStatus;
+  commission_percent: number | string | null;
+  commission_fixed: number | string | null;
+  commission_min: number | string | null;
+  commission_max: number | string | null;
+  provider_minimum: number | string | null;
+  payment_processing_percent: number | string | null;
+  payment_processing_fixed: number | string | null;
+  cancellation_fee_customer: number | string | null;
+  cancellation_compensation_provider: number | string | null;
+  currency: string;
+  notes: string | null;
+  created_at: string;
+  created_by: string | null;
+  activated_at: string | null;
+  activated_by: string | null;
+  archived_at: string | null;
+};
+
+export type ConnectOnboardingStatus =
+  | 'not_started'
+  | 'pending'
+  | 'restricted'
+  | 'enabled'
+  | 'disabled';
+
+// Signed movements. Positive credits the provider, negative pays out or takes
+// back. Corrections are new entries: the table refuses UPDATE outright.
+export type LedgerEntryType =
+  | 'earning'
+  | 'supplement'
+  | 'adjustment'
+  | 'refund_reversal'
+  | 'payout'
+  | 'payout_reversal';
+
+export type PayoutState = 'pending' | 'eligible' | 'held' | 'paid' | 'reversed';
+
+export type ProviderLedgerEntry = {
+  id: number;
+  company_id: string;
+  driver_id: string | null;
+  request_id: string | null;
+  payout_id: string | null;
+  entry_type: LedgerEntryType;
+  amount: number | string;
+  currency: string;
+  // NULL means not yet payable. There is no boolean to flip by accident.
+  available_at: string | null;
+  description: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+  created_by: string | null;
+};
+
+export type ProviderPayout = {
+  id: string;
+  company_id: string;
+  amount: number | string;
+  currency: string;
+  state: PayoutState;
+  stripe_transfer_id: string | null;
+  failure_reason: string | null;
+  requested_by: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  paid_at: string | null;
+  reversed_at: string | null;
+};
+
+export type ProviderBalances = {
+  pending: number | string;
+  available: number | string;
+  paid_total: number | string;
+  lifetime_earned: number | string;
+};
+
+export type RefundStatus = 'pending' | 'succeeded' | 'failed' | 'canceled';
+
+export type Refund = {
+  id: string;
+  request_id: string;
+  payment_id: string | null;
+  amount: number | string;
+  currency: string;
+  reason: string;
+  status: RefundStatus;
+  stripe_refund_id: string | null;
+  failure_reason: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type NearbyDriverRow = {
@@ -394,6 +515,18 @@ export type TowRequest = {
   commission_amount: number | string | null;
   partner_amount: number | string | null;
   payment_processing_cost: number | string | null;
+  // Phase 7: which economic configuration produced the money on this row, and
+  // when it stopped being able to change. A later configuration change must
+  // never reprice a job that was already accepted under an older one.
+  pricing_config_id: string | null;
+  pricing_config_version: number | null;
+  pricing_rule_ids: string[];
+  economics_frozen_at: string | null;
+  // Phase 7: what the cancellation actually cost and paid. NULL means no
+  // cancellation policy was configured — not that the fee was zero.
+  cancellation_fee_charged: number | string | null;
+  cancellation_compensation: number | string | null;
+  cancellation_settled_at: string | null;
   // Phase 6: the regulated zone covering the pickup point, stamped by a
   // BEFORE INSERT trigger (0023) so it can never be client-supplied. Null
   // when no active zone covers the point.
@@ -643,6 +776,71 @@ export interface Database {
             referencedColumns: ['id'];
           },
         ];
+      };
+      pricing_configs: {
+        Row: PricingConfig;
+        Insert: Partial<PricingConfig> & { version: number; label: string };
+        Update: Partial<PricingConfig>;
+        Relationships: [];
+      };
+      provider_ledger_entries: {
+        Row: ProviderLedgerEntry;
+        // Written only by trusted server code through the service role; the
+        // table refuses UPDATE and DELETE outright (0035).
+        Insert: Partial<ProviderLedgerEntry> & {
+          company_id: string;
+          entry_type: LedgerEntryType;
+          amount: number;
+        };
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: 'provider_ledger_entries_company_id_fkey';
+            columns: ['company_id'];
+            isOneToOne: false;
+            referencedRelation: 'companies';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      provider_payouts: {
+        Row: ProviderPayout;
+        Insert: Partial<ProviderPayout> & { company_id: string; amount: number };
+        Update: Partial<ProviderPayout>;
+        Relationships: [
+          {
+            foreignKeyName: 'provider_payouts_company_id_fkey';
+            columns: ['company_id'];
+            isOneToOne: false;
+            referencedRelation: 'companies';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      refunds: {
+        Row: Refund;
+        Insert: Partial<Refund> & {
+          request_id: string;
+          amount: number;
+          reason: string;
+          created_by: string;
+        };
+        Update: Partial<Refund>;
+        Relationships: [
+          {
+            foreignKeyName: 'refunds_request_id_fkey';
+            columns: ['request_id'];
+            isOneToOne: false;
+            referencedRelation: 'requests';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      refund_authorizers: {
+        Row: { profile_id: string; granted_by: string | null; granted_at: string; note: string | null };
+        Insert: { profile_id: string; granted_by?: string | null; note?: string | null };
+        Update: Partial<{ note: string | null }>;
+        Relationships: [];
       };
       regulated_towing_zones: {
         Row: RegulatedTowingZone;
@@ -929,6 +1127,22 @@ export interface Database {
         Returns: DispatchCandidateExplanation[];
       };
       pricing_configured: {
+        Args: Record<string, never>;
+        Returns: boolean;
+      };
+      active_pricing_config: {
+        Args: Record<string, never>;
+        Returns: PricingConfig | null;
+      };
+      provider_balances: {
+        Args: { p_company_id: string };
+        Returns: ProviderBalances[];
+      };
+      request_refunded_total: {
+        Args: { p_request_id: string };
+        Returns: number | string;
+      };
+      is_refund_authorizer: {
         Args: Record<string, never>;
         Returns: boolean;
       };

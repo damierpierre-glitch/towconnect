@@ -16,12 +16,17 @@ import {
   unassignVehicle,
   type CompanyMemberRow,
 } from '@/lib/actions/company';
+import { BusinessFinance } from './BusinessFinance';
+import type { ConnectAvailability } from '@/lib/actions/connect';
 import type {
   Company,
   CompanyMemberRole,
   CompanyServiceArea,
   DriverVehicleAssignment,
   FleetVehicle,
+  ProviderBalances,
+  ProviderLedgerEntry,
+  ProviderPayout,
   ServiceCapability,
   TowRequest,
   VehicleType,
@@ -60,7 +65,7 @@ interface ZoneAuthorization {
   zone_id: string;
 }
 
-type Tab = 'drivers' | 'vehicles' | 'jobs' | 'areas' | 'zones';
+type Tab = 'drivers' | 'vehicles' | 'jobs' | 'areas' | 'zones' | 'finance';
 
 export function BusinessDashboard({
   company,
@@ -71,6 +76,7 @@ export function BusinessDashboard({
   areas,
   jobs,
   zoneAuthorizations,
+  finance,
 }: {
   company: Company;
   role: CompanyMemberRole;
@@ -79,6 +85,14 @@ export function BusinessDashboard({
   assignments: DriverVehicleAssignment[];
   areas: CompanyServiceArea[];
   jobs: TowRequest[];
+  // Present only for an owner or admin. Absent — not empty — for everybody
+  // else, so there is nothing to render rather than zeros to misread.
+  finance: {
+    balances: ProviderBalances;
+    entries: ProviderLedgerEntry[];
+    payouts: ProviderPayout[];
+    connect: ConnectAvailability;
+  } | null;
   zoneAuthorizations: ZoneAuthorization[];
 }) {
   const { t, lang } = useLanguage();
@@ -119,6 +133,9 @@ export function BusinessDashboard({
     { key: 'jobs', label: t('biz_jobs') },
     { key: 'areas', label: t('biz_areas') },
     { key: 'zones', label: t('biz_zones') },
+    // A dispatcher runs the day but does not see the company's money. The tab
+    // is absent for them because the data behind it was never fetched.
+    ...(finance ? [{ key: 'finance' as Tab, label: t('biz_finance') }] : []),
   ];
 
   return (
@@ -332,6 +349,16 @@ export function BusinessDashboard({
           </Card>
           {isManager ? <AddAreaForm companyId={company.id} busy={busy} onRun={run} /> : null}
         </div>
+      ) : null}
+
+      {tab === 'finance' && finance ? (
+        <BusinessFinance
+          company={company}
+          balances={finance.balances}
+          entries={finance.entries}
+          payouts={finance.payouts}
+          connect={finance.connect}
+        />
       ) : null}
 
       {tab === 'zones' ? (

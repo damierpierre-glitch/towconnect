@@ -14,6 +14,7 @@ import { SupplementsPanel } from '@/components/SupplementsPanel';
 import { MapView } from '@/components/MapView';
 import { StatusTracker } from '@/components/StatusTracker';
 import { acceptRequest, advanceRequestStatus, declineRequest, toggleOnline, updateDriverInfo, updateDriverLocation } from '@/lib/actions/driver';
+import { quoteProviderCompensation } from '@/lib/actions/economics';
 import { problemLabel, CANADIAN_PROVINCES, DRIVER_QUICK_MESSAGES, PROBLEM_TYPES } from '@/lib/constants';
 import { distanceKm, estimateEtaMinutes, toMoney } from '@/lib/pricing';
 import { Select, Input, Label } from '@/components/ui/Field';
@@ -46,6 +47,11 @@ export function DriverDashboard({
   const [myRequests, setMyRequests] = useState<TowRequest[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [offerExpiresAt, setOfferExpiresAt] = useState<string | null>(null);
+  // What this job would actually pay the driver, tagged with the offer it was
+  // fetched for. `amount: null` is a real answer — "no commission rate is
+  // configured" — and the card renders nothing for it rather than a zero,
+  // which would read as "this job pays nothing".
+  const [offerQuote, setOfferQuote] = useState<{ requestId: string; amount: number | null } | null>(null);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [client, setClient] = useState<ClientInfo | null>(null);
   const [gpsStatus, setGpsStatus] = useState<'idle' | 'ok' | 'denied' | 'unavailable'>('idle');
@@ -172,6 +178,29 @@ export function DriverDashboard({
   const today = new Date().toDateString();
   const todayCount = completed.filter((r) => new Date(r.created_at).toDateString() === today).length;
   const revenue = completed.reduce((sum, r) => sum + toMoney(r.price_estimate), 0);
+
+  // A driver should know what they are being paid BEFORE they accept, not
+  // after. Fetched per offer because nothing is frozen until acceptance.
+  useEffect(() => {
+    if (!pending) return;
+    const requestId = pending.id;
+    let cancelled = false;
+    quoteProviderCompensation(toMoney(pending.price_estimate))
+      .then((amount) => {
+        if (!cancelled) setOfferQuote({ requestId, amount });
+      })
+      .catch(() => {
+        if (!cancelled) setOfferQuote({ requestId, amount: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pending]);
+
+  // Only ever the quote for the offer on screen. A quote left over from a
+  // previous offer is ignored rather than shown against the wrong job.
+  const offerCompensation =
+    pending && offerQuote?.requestId === pending.id ? offerQuote.amount : null;
 
   // Offer countdown — read-only (dispatch_offers has no client-writable
   // policy). expires_at is the server-side truth; this is purely a display
@@ -400,7 +429,13 @@ export function DriverDashboard({
 
           <div className="text-center mb-4">
             <div className="text-4xl font-display font-bold text-orange">${toMoney(pending.price_estimate).toFixed(0)}</div>
-            <div className="text-xs text-muted mt-0.5">{lang === 'fr' ? 'pour cette course' : 'for this job'}</div>
+            <div className="text-xs text-muted mt-0.5">{t('fin_customer_pays')}</div>
+            {offerCompensation !== null ? (
+              <div className="mt-2 inline-flex items-baseline gap-2 rounded-lg bg-night-3 px-3 py-1.5">
+                <span className="text-xs text-text-2">{t('fin_you_will_receive')}</span>
+                <span className="font-display text-lg font-bold text-green">${offerCompensation.toFixed(2)}</span>
+              </div>
+            ) : null}
           </div>
 
           <div className="grid grid-cols-2 gap-3 mb-4 text-sm">

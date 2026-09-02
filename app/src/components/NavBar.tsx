@@ -48,6 +48,11 @@ const businessLink: SubLink = {
 
 const adminSubLinks: SubLink[] = [
   { href: '/dashboard/admin/zones', icon: '⚠️', fr: 'Zones', en: 'Zones' },
+  // Phase 7. Two separate screens on purpose: deciding the economics and
+  // watching the money are different jobs, and putting the commission form
+  // next to a refund button invites the wrong one to be clicked.
+  { href: '/dashboard/admin/economics', icon: '⚖️', fr: 'Économie', en: 'Economics' },
+  { href: '/dashboard/admin/finance', icon: '💵', fr: 'Finance', en: 'Finance' },
 ];
 
 const driverSubLinks: SubLink[] = [

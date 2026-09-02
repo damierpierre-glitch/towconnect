@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { settleApprovedSupplement } from '@/lib/actions/finance';
 import type { RequestSupplement, ServiceSupplementType } from '@/lib/supabase/types';
 
 // The product rule is "no surprise supplement". The database rule that makes
@@ -65,6 +66,20 @@ export async function respondToSupplement(supplementId: string, approve: boolean
     .update({ status: approve ? 'approved' : 'declined' })
     .eq('id', supplementId);
   if (error) throw error;
+
+  // Approving is the customer agreeing to pay more, so the money has to be
+  // secured now rather than assumed at capture time. Best-effort: the
+  // approval itself has committed, and settleApprovedSupplement() records
+  // 'uncollected' with a reason when the hold cannot be increased — it never
+  // pretends the money is there.
+  if (approve) {
+    try {
+      await settleApprovedSupplement(supplementId);
+    } catch {
+      // The supplement stays 'pending' and uncredited, which is the safe end.
+    }
+  }
+
   revalidatePath('/request');
 }
 

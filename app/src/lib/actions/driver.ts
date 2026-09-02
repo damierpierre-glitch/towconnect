@@ -3,6 +3,8 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { captureRequestPayment } from '@/lib/actions/payments';
+import { freezeRequestEconomics } from '@/lib/actions/economics';
+import { recordJobEarning } from '@/lib/actions/finance';
 import type { RequestStatus, VehicleType } from '@/lib/supabase/types';
 
 export async function updateDriverInfo(input: {
@@ -112,6 +114,20 @@ export async function acceptRequest(requestId: string) {
     throw error;
   }
 
+  // The job is accepted, so what the driver is paid stops being a live
+  // calculation and becomes a fact on the row. A later change to the
+  // commission must never reprice a job somebody already agreed to.
+  //
+  // Best-effort on purpose: the acceptance itself has already committed, and
+  // throwing here would tell the driver their accept failed when it did not.
+  // The freeze is idempotent, so a retry path can still fill it in.
+  try {
+    await freezeRequestEconomics(requestId);
+  } catch {
+    // Left unfrozen rather than guessed at. partner_amount stays NULL, which
+    // the UI reads as "not configured" and never as zero.
+  }
+
   revalidatePath('/dashboard/driver');
 }
 
@@ -176,6 +192,16 @@ export async function advanceRequestStatus(
       await captureRequestPayment(requestId);
     } catch {
       // Intentionally swallowed — see comment above.
+    }
+    // Credit the provider's frozen compensation to their ledger. Runs after
+    // the capture attempt so the entry knows whether the money is actually
+    // payable yet; a job whose capture failed is still earned, just not
+    // available. Also swallowed: a bookkeeping failure is not a reason the
+    // driver cannot close their job.
+    try {
+      await recordJobEarning(requestId);
+    } catch {
+      // The ledger is append-only, so this can be replayed safely later.
     }
   }
 

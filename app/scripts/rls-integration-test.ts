@@ -3024,6 +3024,212 @@ async function run(): Promise<Result[]> {
         detail: 'an unactivated boundary leaked to a driver',
       });
 
+      // ================================================================
+      // Phase 7 — money. Eight invariants, all about the same idea: nobody
+      // can move, edit or read money that is not theirs, and the protection
+      // is structural rather than a hidden button.
+      // ================================================================
+
+      // A real ledger entry to test against, written the only way one can be
+      // written: trusted server code through the service role.
+      const { data: ledgerRow, error: ledgerInsertError } = await admin
+        .from('provider_ledger_entries')
+        .insert({
+          company_id: coA,
+          driver_id: driverA.id,
+          request_id: jobA,
+          entry_type: 'earning',
+          amount: 40,
+          available_at: new Date().toISOString(),
+          description: 'Phase 7 RLS fixture',
+        })
+        .select('id')
+        .single();
+      results.push({
+        name: 'setup: the service role can write a ledger entry',
+        pass: !ledgerInsertError && ledgerRow?.id != null,
+        detail: ledgerInsertError?.message,
+      });
+
+      // 1. Another company's driver must not see it.
+      const { data: crossLedger } = await driverB.client
+        .from('provider_ledger_entries')
+        .select('id')
+        .eq('id', ledgerRow!.id)
+        .maybeSingle();
+      results.push({
+        name: "a driver cannot read another company's ledger entries",
+        pass: crossLedger == null,
+        detail: "company B's driver read company A's ledger",
+      });
+
+      // 2. Nor may another company's OWNER, who can read their own book.
+      const { data: crossOwnerLedger } = await ownerB.client
+        .from('provider_ledger_entries')
+        .select('id')
+        .eq('id', ledgerRow!.id)
+        .maybeSingle();
+      const { data: ownLedger } = await ownerA.client
+        .from('provider_ledger_entries')
+        .select('id')
+        .eq('id', ledgerRow!.id)
+        .maybeSingle();
+      results.push({
+        name: "a company owner reads their own ledger and not another company's",
+        pass: crossOwnerLedger == null && ownLedger?.id === ledgerRow!.id,
+        detail: crossOwnerLedger != null ? "company B's owner read company A's ledger" : 'own ledger was not readable',
+      });
+
+      // 3. A company cannot credit itself. There is no INSERT policy at all.
+      const { error: selfCreditError } = await ownerA.client
+        .from('provider_ledger_entries')
+        .insert({
+          company_id: coA,
+          entry_type: 'earning',
+          amount: 9999,
+          available_at: new Date().toISOString(),
+        } as never);
+      results.push({
+        name: 'a company owner cannot write their own ledger entry',
+        pass: Boolean(selfCreditError),
+        detail: 'a company credited itself',
+      });
+
+      // 4. The ledger is append-only even for the service role: a correction
+      //    is a new entry, never an edit of an old one.
+      const { error: ledgerUpdateError } = await admin
+        .from('provider_ledger_entries')
+        .update({ amount: 1 } as never)
+        .eq('id', ledgerRow!.id);
+      results.push({
+        name: 'a ledger entry cannot be updated, even by the service role',
+        pass: Boolean(ledgerUpdateError),
+        detail: 'a ledger entry was edited after the fact',
+      });
+
+      // 5. Balances are SECURITY DEFINER, so the table's RLS does not protect
+      //    them — the function has to say who may ask (0038).
+      const { error: crossBalanceError } = await ownerB.client.rpc('provider_balances' as never, {
+        p_company_id: coA,
+      } as never);
+      const { data: ownBalance, error: ownBalanceError } = await ownerA.client.rpc(
+        'provider_balances' as never,
+        { p_company_id: coA } as never
+      );
+      results.push({
+        name: "a company owner cannot read another company's balances",
+        pass: Boolean(crossBalanceError) && !ownBalanceError && ownBalance != null,
+        detail: crossBalanceError
+          ? 'own balances were not readable'
+          : "company B's owner read company A's balances",
+      });
+
+      // 6. The economics themselves are admin-only. A driver setting the
+      //    commission would be setting their own pay.
+      const { error: driverPricingError } = await driverA.client
+        .from('pricing_configs')
+        .insert({ version: 9999, label: 'RLS attempt', status: 'draft', commission_percent: 1 } as never);
+      results.push({
+        name: 'a driver cannot create a pricing configuration',
+        pass: Boolean(driverPricingError),
+        detail: 'a driver wrote the platform economics',
+      });
+
+      // 7. A refund moves a customer's money. Only a platform admin, and the
+      //    absence of an INSERT policy is what makes that structural.
+      const { error: riderRefundError } = await rider.client.from('refunds').insert({
+        request_id: jobA,
+        amount: 10,
+        reason: 'RLS attempt',
+        created_by: rider.id,
+      } as never);
+      const { error: driverRefundError } = await driverA.client.from('refunds').insert({
+        request_id: jobA,
+        amount: 10,
+        reason: 'RLS attempt',
+        created_by: driverA.id,
+      } as never);
+      results.push({
+        name: 'neither a customer nor a driver can issue a refund',
+        pass: Boolean(riderRefundError) && Boolean(driverRefundError),
+        detail: 'a refund was created from a browser session',
+      });
+
+      // 8. Connect flags are Stripe's answers, not a company's claim. A
+      //    company that could set its own payouts_enabled would not need to
+      //    onboard at all (0034 trigger).
+      const { error: connectSelfWrite } = await ownerA.client
+        .from('companies')
+        .update({ connect_payouts_enabled: true, connect_status: 'enabled' } as never)
+        .eq('id', coA);
+      const { data: connectAfter } = await admin
+        .from('companies')
+        .select('connect_payouts_enabled')
+        .eq('id', coA)
+        .single();
+      results.push({
+        name: 'a company cannot enable its own Stripe payouts',
+        pass: Boolean(connectSelfWrite) || connectAfter?.connect_payouts_enabled === false,
+        detail: 'a company marked its own payouts enabled',
+      });
+
+      // 9. An approved supplement's payment state says whether the money was
+      //    secured. A driver who could set it to 'settled' would be crediting
+      //    their own ledger (0037 trigger).
+      const { data: supplementRow } = await admin
+        .from('request_supplements')
+        .insert({
+          request_id: jobA,
+          type_key: 'winch',
+          amount: 25,
+          status: 'proposed',
+          proposed_by: driverA.id,
+        } as never)
+        .select('id')
+        .single();
+
+      if (supplementRow?.id) {
+        const { error: supplementStateError } = await driverA.client
+          .from('request_supplements')
+          .update({ payment_state: 'settled' } as never)
+          .eq('id', supplementRow.id);
+        const { data: supplementAfter } = await admin
+          .from('request_supplements')
+          .select('payment_state')
+          .eq('id', supplementRow.id)
+          .single();
+        results.push({
+          name: "a driver cannot mark a supplement's payment as settled",
+          pass: Boolean(supplementStateError) || supplementAfter?.payment_state === 'pending',
+          detail: 'a driver settled their own supplement',
+        });
+      } else {
+        results.push({
+          name: "a driver cannot mark a supplement's payment as settled",
+          pass: false,
+          detail: 'the supplement fixture could not be created',
+        });
+      }
+
+      // 10. The economic snapshot on a request is the platform's record of
+      //     what was agreed. The assigned driver may still only move status.
+      const { error: snapshotWriteError } = await driverA.client
+        .from('requests')
+        .update({ partner_amount: 999, economics_frozen_at: new Date().toISOString() } as never)
+        .eq('id', jobA);
+      const { data: snapshotAfter } = await admin
+        .from('requests')
+        .select('partner_amount')
+        .eq('id', jobA)
+        .single();
+      results.push({
+        name: 'a driver cannot write their own frozen compensation',
+        pass: Boolean(snapshotWriteError) || snapshotAfter?.partner_amount == null,
+        detail: 'a driver set their own pay on a request',
+      });
+
+      await admin.from('request_supplements').delete().eq('request_id', jobA);
+
       // ---- teardown ----
       await admin.from('requests').delete().eq('user_id', rider.id);
       await admin.from('company_members').delete().in('company_id', [coA, coB]);

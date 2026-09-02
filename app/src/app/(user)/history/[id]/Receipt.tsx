@@ -6,8 +6,9 @@ import type { DictKey } from '@/lib/i18n/dictionary';
 import { problemLabel } from '@/lib/constants';
 import { toMoney } from '@/lib/pricing';
 import { Card } from '@/components/ui/Card';
+import { formatDateTime } from '@/lib/formatDate';
 import { Badge } from '@/components/ui/Badge';
-import type { Payment, PaymentStatus, TowRequest } from '@/lib/supabase/types';
+import type { Payment, PaymentStatus, Refund, RequestSupplement, TowRequest } from '@/lib/supabase/types';
 
 const PAYMENT_BADGE_TONE: Record<PaymentStatus, 'green' | 'yellow' | 'red' | 'orange'> = {
   requires_payment_method: 'yellow',
@@ -19,22 +20,42 @@ const PAYMENT_BADGE_TONE: Record<PaymentStatus, 'green' | 'yellow' | 'red' | 'or
   refunded: 'orange',
 };
 
+// What the customer sees. Deliberately says nothing about commission, the
+// provider's share or TowConnect's margin: none of that is the customer's
+// business, and a receipt that itemises somebody else's pay invites a
+// negotiation the customer was never part of. What it must show is everything
+// THEY were charged — including anything added or given back after the fact.
 export function Receipt({
   request,
   driverName,
   payment,
+  supplements,
+  refunds,
 }: {
   request: TowRequest;
   driverName: string | null;
   payment: Payment | null;
+  supplements: RequestSupplement[];
+  refunds: Refund[];
 }) {
   const { t, lang } = useLanguage();
 
   const base = toMoney(request.price_base);
   const distance = toMoney(request.price_distance);
   const surcharge = toMoney(request.price_surcharge);
-  const total = toMoney(request.price_estimate);
   const towKm = request.tow_distance_km == null ? null : toMoney(request.tow_distance_km);
+
+  // Only approved supplements are money. A proposed one is a question the
+  // customer has not answered, and it does not belong on a receipt.
+  const approvedSupplements = supplements.filter((s) => s.status === 'approved');
+  const supplementTotal = approvedSupplements.reduce((sum, s) => sum + toMoney(s.amount), 0);
+  const cancellationFee = request.cancellation_fee_charged == null ? 0 : toMoney(request.cancellation_fee_charged);
+  const refundedTotal = refunds
+    .filter((r) => r.status === 'succeeded')
+    .reduce((sum, r) => sum + toMoney(r.amount), 0);
+
+  const total = toMoney(request.price_estimate) + supplementTotal + cancellationFee;
+  const netPaid = total - refundedTotal;
 
   return (
     <div className="max-w-md mx-auto px-6 py-8">
@@ -51,10 +72,10 @@ export function Receipt({
 
         <dl className="flex flex-col gap-3 text-sm mb-5">
           <Row label={t('receipt_service')} value={problemLabel(request.problem_type, lang)} />
-          <Row
-            label={t('receipt_date')}
-            value={new Date(request.created_at).toLocaleString(lang === 'fr' ? 'fr-CA' : 'en-CA')}
-          />
+          {/* Formatted from the ISO string rather than through the host's
+              locale data: Node's answer and the browser's differ, and this
+              component renders on both. */}
+          <Row label={t('receipt_date')} value={formatDateTime(request.created_at)} />
           <Row label={t('receipt_pickup')} value={request.location_text} />
           {request.destination_address ? (
             <Row label={t('receipt_destination')} value={request.destination_address} />
@@ -81,10 +102,31 @@ export function Receipt({
             value={distance}
           />
           {surcharge > 0 ? <PriceLine label={lang === 'fr' ? 'Supplément' : 'Surcharge'} value={surcharge} /> : null}
+          {approvedSupplements.map((s) => (
+            <PriceLine key={s.id} label={`${t('fin_receipt_supplement')} · ${s.type_key}`} value={toMoney(s.amount)} />
+          ))}
+          {cancellationFee > 0 ? (
+            <PriceLine
+              label={lang === 'fr' ? "Frais d'annulation" : 'Cancellation fee'}
+              value={cancellationFee}
+            />
+          ) : null}
           <div className="flex justify-between items-center pt-2 mt-2 border-t border-steel/60">
             <span className="font-semibold">{t('receipt_total')}</span>
             <span className="font-display text-xl font-bold text-orange">${total.toFixed(2)}</span>
           </div>
+          {refundedTotal > 0 ? (
+            <>
+              <div className="flex justify-between text-sm text-green py-0.5 mt-2">
+                <span>{t('fin_receipt_refunded')}</span>
+                <span>−${refundedTotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between items-center pt-2 mt-2 border-t border-steel/60">
+                <span className="font-semibold">{t('fin_receipt_total')}</span>
+                <span className="font-display text-lg font-bold">${netPaid.toFixed(2)}</span>
+              </div>
+            </>
+          ) : null}
         </div>
 
         {payment ? (
