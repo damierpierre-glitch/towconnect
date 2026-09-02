@@ -18,9 +18,16 @@ import type { RequestSupplement, ServiceSupplementType } from '@/lib/supabase/ty
 export function SupplementsPanel({
   requestId,
   role,
+  basePrice,
 }: {
   requestId: string;
   role: 'customer' | 'driver';
+  /**
+   * The fare the customer already agreed to. Passed in so the panel can show
+   * what the total BECOMES if they approve — "no surprise supplement" means
+   * showing the new number before the decision, not after it.
+   */
+  basePrice?: number;
 }) {
   const { t, lang } = useLanguage();
   const { showToast } = useToast();
@@ -91,6 +98,32 @@ export function SupplementsPanel({
   const visible = supplements.filter((s) => s.status !== 'cancelled' || role === 'driver');
   if (visible.length === 0) return null;
 
+  // Only money that was actually charged counts towards the running total. An
+  // approved supplement that could not be collected is not part of what the
+  // customer owes, and showing it as such would be a bill for nothing.
+  const chargedSoFar = supplements
+    .filter(
+      (s) =>
+        s.status === 'approved' && (s.payment_state === 'settled' || s.payment_state === 'authorized')
+    )
+    .reduce((sum, s) => sum + toMoney(s.amount), 0);
+
+  // What the customer is told about their money after they said yes. Phrased
+  // as facts about the charge, never as an apology or a promise.
+  const paymentStateNote = (state: RequestSupplement['payment_state']) => {
+    if (state === 'settled') return lang === 'fr' ? 'Facturé' : 'Charged';
+    if (state === 'authorized') return lang === 'fr' ? 'Ajouté à votre autorisation' : 'Added to your authorization';
+    if (state === 'requires_action') {
+      return lang === 'fr'
+        ? 'Votre banque demande une confirmation'
+        : 'Your bank is asking you to confirm';
+    }
+    if (state === 'uncollected' || state === 'failed') {
+      return lang === 'fr' ? 'Non facturé' : 'Not charged';
+    }
+    return lang === 'fr' ? 'En cours' : 'In progress';
+  };
+
   return (
     <div className="border-t border-night-4 pt-4 mt-4">
       <h4 className="font-display font-bold text-sm mb-1">{t('supp_title')}</h4>
@@ -110,6 +143,21 @@ export function SupplementsPanel({
                   ${amount.toFixed(2)}
                 </span>
               </div>
+
+              {/* The new total, shown before the answer rather than after. */}
+              {s.status === 'proposed' && role === 'customer' && basePrice != null ? (
+                <p className="text-xs text-text-2 mt-2">
+                  {lang === 'fr' ? 'Nouveau total si vous acceptez' : 'New total if you accept'} :{' '}
+                  <strong className="text-text">
+                    ${(basePrice + chargedSoFar + amount).toFixed(2)}
+                  </strong>
+                  <span className="text-muted">
+                    {' '}
+                    ({lang === 'fr' ? 'actuellement' : 'currently'} $
+                    {(basePrice + chargedSoFar).toFixed(2)})
+                  </span>
+                </p>
+              ) : null}
 
               <div className="mt-2.5 flex items-center gap-2 flex-wrap">
                 {s.status === 'proposed' ? (
@@ -157,6 +205,19 @@ export function SupplementsPanel({
                         : t('supp_cancelled_badge')}
                   </span>
                 )}
+                {s.status === 'approved' ? (
+                  <span
+                    className={`text-xs ${
+                      s.payment_state === 'settled' || s.payment_state === 'authorized'
+                        ? 'text-text-2'
+                        : s.payment_state === 'requires_action'
+                          ? 'text-yellow'
+                          : 'text-muted'
+                    }`}
+                  >
+                    · {paymentStateNote(s.payment_state)}
+                  </span>
+                ) : null}
               </div>
             </li>
           );

@@ -312,9 +312,22 @@ export type RequestSupplement = {
   // Phase 7. Approval is a promise; this is whether the money was secured.
   // Written only by the platform (0037 trigger) — a driver who could set this
   // to 'settled' would be crediting their own ledger.
-  payment_state: 'pending' | 'authorized' | 'uncollected' | 'settled';
+  // Phase 8.1. 'requires_action' is neither collected nor failed: an
+  // off-session charge that trips authentication is money still in flight,
+  // and flattening it either way loses something real.
+  payment_state:
+    | 'pending'
+    | 'authorized'
+    | 'requires_action'
+    | 'uncollected'
+    | 'failed'
+    | 'settled';
   payment_note: string | null;
   payment_settled_at: string | null;
+  // The supplement's own PaymentIntent, when the fare's hold could not be
+  // grown. UNIQUE in the database: one agreement, at most one charge.
+  stripe_payment_intent_id: string | null;
+  collection_method: 'incremental_authorization' | 'separate_payment_intent' | null;
   created_at: string;
   updated_at: string;
 };
@@ -406,6 +419,9 @@ export type ProviderLedgerEntry = {
   request_id: string | null;
   payout_id: string | null;
   entry_type: LedgerEntryType;
+  // Which supplement this entry pays for, when it is one. Unique where set,
+  // so a replayed settlement cannot credit twice (0045).
+  supplement_id: string | null;
   amount: number | string;
   currency: string;
   // NULL means not yet payable. There is no boolean to flip by accident.
@@ -445,6 +461,9 @@ export type Refund = {
   id: string;
   request_id: string;
   payment_id: string | null;
+  // Set when the refund is against a supplement's own PaymentIntent rather
+  // than the fare the customer already accepted.
+  supplement_id: string | null;
   amount: number | string;
   currency: string;
   reason: string;

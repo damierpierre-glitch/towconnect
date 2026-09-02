@@ -37,8 +37,8 @@ import type {
 // AUTHORIZATION
 // Every function below is guarded IN THE DATABASE by has_admin_capability(),
 // null-safely (0039). The checks in this file exist so the UI can hide what a
-// user cannot do; they are not the protection. An operator with no grants at
-// all keeps full access — see the grandfather rule in 0041.
+// user cannot do; they are not the protection. Since 0044 an admin holds only
+// what they were granted: no grant means no privileged access at all.
 
 async function requireCapability(capability: AdminCapability): Promise<string> {
   const supabase = await createClient();
@@ -93,8 +93,9 @@ export async function getMyCapabilities(): Promise<{
     finance: finance.data === true,
     support: support.data === true,
     superAdmin: superAdmin.data === true,
-    // Whether anybody has narrowed this account yet. An unscoped admin sees
-    // everything; the UI says so rather than implying the grants are real.
+    // Whether this account holds anything at all. Since 0044 an admin with no
+    // grants can do nothing privileged, so the UI warns rather than implying
+    // the empty state is generous.
     scoped: (grants.data ?? []).length > 0,
   };
 }

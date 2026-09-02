@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import Stripe from 'stripe';
 import { getStripe, isStripeConfigured } from '@/lib/stripe/server';
 import { assertSandbox } from '@/lib/stripe/connect';
 import { settle, settleCancellation, type EconomicConfig } from '@/lib/economics';
@@ -73,6 +74,15 @@ export async function issueRefund(input: {
   requestId: string;
   amount: number;
   reason: string;
+  /**
+   * Refund a supplement's own charge rather than the fare.
+   *
+   * A supplement collected on a separate PaymentIntent has to be refundable
+   * on its own: giving back an extra the customer disputes should not touch
+   * the fare they already accepted, and refunding the fare should not
+   * silently claw back an agreed extra.
+   */
+  supplementId?: string | null;
 }): Promise<Refund> {
   const actorId = await assertRefundAuthorizer();
   if (!isStripeConfigured()) throw new Error('Stripe is not configured.');
@@ -89,36 +99,81 @@ export async function issueRefund(input: {
 
   const admin = createAdminClient();
 
-  const { data: payment } = await admin
-    .from('payments')
-    .select('id, stripe_payment_intent_id, amount, status')
-    .eq('request_id', input.requestId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // Which charge is being refunded: the fare, or one supplement's own intent.
+  let intentId: string;
+  let refundable: number;
+  let paymentId: string | null = null;
 
-  if (!payment?.stripe_payment_intent_id) {
-    throw new Error('There is no captured payment on this request to refund.');
-  }
-  if (payment.status !== 'captured') {
-    throw new Error(`This payment is ${payment.status}, not captured — there is nothing to refund yet.`);
+  if (input.supplementId) {
+    const { data: supplement } = await admin
+      .from('request_supplements')
+      .select('id, amount, payment_state, stripe_payment_intent_id, request_id')
+      .eq('id', input.supplementId)
+      .maybeSingle();
+    if (!supplement || supplement.request_id !== input.requestId) {
+      throw new Error('That supplement does not belong to this request.');
+    }
+    if (supplement.payment_state !== 'settled' || !supplement.stripe_payment_intent_id) {
+      throw new Error(
+        `This supplement is ${supplement.payment_state}; there is no collected money to refund.`
+      );
+    }
+    const { data: priorRefunds } = await admin
+      .from('refunds')
+      .select('amount, status')
+      .eq('supplement_id', supplement.id);
+    const already = (priorRefunds ?? [])
+      .filter((r) => r.status === 'succeeded' || r.status === 'pending')
+      .reduce((sum, r) => sum + Number(r.amount), 0);
+    intentId = supplement.stripe_payment_intent_id;
+    refundable = Number(supplement.amount) - already;
+  } else {
+    const { data: payment } = await admin
+      .from('payments')
+      .select('id, stripe_payment_intent_id, amount, status')
+      .eq('request_id', input.requestId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!payment?.stripe_payment_intent_id) {
+      throw new Error('There is no captured payment on this request to refund.');
+    }
+    if (payment.status !== 'captured') {
+      throw new Error(`This payment is ${payment.status}, not captured — there is nothing to refund yet.`);
+    }
+
+    const { data: alreadyRefunded } = await admin.rpc('request_refunded_total' as never, {
+      p_request_id: input.requestId,
+    } as never);
+    // request_refunded_total() counts every refund on the request, including
+    // any against a supplement's own intent, so those are excluded here —
+    // otherwise refunding a supplement would silently reduce what can be
+    // refunded on the fare.
+    const { data: supplementRefunds } = await admin
+      .from('refunds')
+      .select('amount, status')
+      .eq('request_id', input.requestId)
+      .not('supplement_id', 'is', null);
+    const supplementRefunded = (supplementRefunds ?? [])
+      .filter((r) => r.status === 'succeeded')
+      .reduce((sum, r) => sum + Number(r.amount), 0);
+
+    intentId = payment.stripe_payment_intent_id;
+    paymentId = payment.id;
+    refundable = Number(payment.amount) - (Number(alreadyRefunded ?? 0) - supplementRefunded);
   }
 
-  const { data: alreadyRefunded } = await admin.rpc('request_refunded_total' as never, {
-    p_request_id: input.requestId,
-  } as never);
-  const remaining = Number(payment.amount) - Number(alreadyRefunded ?? 0);
-  if (input.amount > remaining + 0.005) {
-    throw new Error(
-      `Only $${remaining.toFixed(2)} of this payment is left to refund.`
-    );
+  if (input.amount > refundable + 0.005) {
+    throw new Error(`Only $${refundable.toFixed(2)} of this charge is left to refund.`);
   }
 
   const { data: refund, error: insertError } = await admin
     .from('refunds')
     .insert({
       request_id: input.requestId,
-      payment_id: payment.id,
+      payment_id: paymentId,
+      supplement_id: input.supplementId ?? null,
       amount: Math.round(input.amount * 100) / 100,
       reason: input.reason.trim(),
       status: 'pending',
@@ -128,11 +183,13 @@ export async function issueRefund(input: {
     .single();
   if (insertError) throw insertError;
 
+  const remaining = refundable;
+
   try {
     const stripe = getStripe();
     const stripeRefund = await stripe.refunds.create(
       {
-        payment_intent: payment.stripe_payment_intent_id,
+        payment_intent: intentId,
         amount: Math.round(input.amount * 100),
         metadata: { towconnect_refund_id: refund.id, reason: input.reason.slice(0, 400) },
       },
@@ -148,10 +205,14 @@ export async function issueRefund(input: {
       .eq('id', refund.id);
 
     if (stripeRefund.status === 'succeeded') {
-      await reverseProviderEarningForRefund(input.requestId, input.amount, refund.id);
-      const fullyRefunded = input.amount >= remaining - 0.005;
-      if (fullyRefunded) {
-        await admin.from('payments').update({ status: 'refunded' }).eq('id', payment.id);
+      if (input.supplementId) {
+        await reverseSupplementCredit(input.supplementId, input.amount, refund.id);
+      } else {
+        await reverseProviderEarningForRefund(input.requestId, input.amount, refund.id);
+        const fullyRefunded = input.amount >= remaining - 0.005;
+        if (fullyRefunded && paymentId) {
+          await admin.from('payments').update({ status: 'refunded' }).eq('id', paymentId);
+        }
       }
     }
   } catch (e) {
@@ -222,6 +283,54 @@ async function reverseProviderEarningForRefund(
   } as never);
 }
 
+/**
+ * Take back the provider's share of a refunded supplement.
+ *
+ * Proportional to what they were credited for that supplement, and written as
+ * a new negative entry — the original credit stays exactly as it was. The
+ * ledger has to be able to say "you were paid $20 for the winching, then the
+ * customer was refunded half of it", and rewriting the credit would erase the
+ * first half of that sentence.
+ */
+async function reverseSupplementCredit(
+  supplementId: string,
+  refundAmount: number,
+  refundId: string
+): Promise<void> {
+  const admin = createAdminClient();
+
+  const { data: credit } = await admin
+    .from('provider_ledger_entries')
+    .select('id, company_id, driver_id, request_id, amount')
+    .eq('supplement_id', supplementId)
+    .maybeSingle();
+  if (!credit) return;
+
+  const { data: supplement } = await admin
+    .from('request_supplements')
+    .select('amount')
+    .eq('id', supplementId)
+    .single();
+
+  const supplementTotal = Number(supplement?.amount ?? 0);
+  if (supplementTotal <= 0) return;
+
+  const providerShare = Number(credit.amount) / supplementTotal;
+  const clawback = Math.round(refundAmount * providerShare * 100) / 100;
+  if (clawback <= 0) return;
+
+  await admin.from('provider_ledger_entries').insert({
+    company_id: credit.company_id,
+    driver_id: credit.driver_id,
+    request_id: credit.request_id,
+    entry_type: 'refund_reversal',
+    amount: -clawback,
+    available_at: new Date().toISOString(),
+    description: `Supplement refunded $${refundAmount.toFixed(2)}; provider share returned`,
+    metadata: { refund_id: refundId, supplement_id: supplementId, provider_share: providerShare },
+  } as never);
+}
+
 // ---------------------------------------------------------------- ledger
 
 export async function listLedgerEntries(companyId: string, limit = 100): Promise<ProviderLedgerEntry[]> {
@@ -258,51 +367,6 @@ function toEconomicConfig(row: PricingConfig | null | undefined): EconomicConfig
     paymentProcessingPercent: num(row.payment_processing_percent),
     paymentProcessingFixed: num(row.payment_processing_fixed),
   };
-}
-
-/**
- * What the provider should end up with once secured supplements are counted.
- *
- * Computed on the WHOLE job at its new total, not on the supplement alone.
- * Splitting a $20 supplement by itself would re-apply the per-job floors and
- * caps a second time — a $60 provider minimum would turn a $20 extra into
- * another $60. Recomputing the job and subtracting what is already credited
- * applies each floor exactly once, and makes the function safe to re-run.
- *
- * Only supplements whose money was actually secured count. An approved
- * supplement that could not be added to the authorization is a promise, and
- * crediting a promise is how a provider gets paid for cash that never came.
- */
-async function providerTargetFor(request: {
-  id: string;
-  price_estimate: number | string | null;
-  partner_amount: number | string | null;
-  pricing_config_id: string | null;
-}): Promise<number | null> {
-  if (request.partner_amount == null) return null;
-  const base = Number(request.partner_amount);
-  if (!request.pricing_config_id) return base;
-
-  const admin = createAdminClient();
-  const { data: supplements } = await admin
-    .from('request_supplements')
-    .select('amount, payment_state')
-    .eq('request_id', request.id)
-    .eq('status', 'approved');
-
-  const secured = (supplements ?? [])
-    .filter((s) => s.payment_state === 'authorized' || s.payment_state === 'settled')
-    .reduce((sum, s) => sum + Number(s.amount), 0);
-  if (secured <= 0) return base;
-
-  const { data: config } = await admin
-    .from('pricing_configs')
-    .select('*')
-    .eq('id', request.pricing_config_id)
-    .maybeSingle();
-
-  const total = Number(request.price_estimate ?? 0) + secured;
-  return settle(total, toEconomicConfig(config)).providerCompensation ?? base;
 }
 
 /**
@@ -361,27 +425,37 @@ export async function recordJobEarning(requestId: string): Promise<void> {
       description: 'Completed job',
     } as never);
 
-  const target = await providerTargetFor(request);
-  if (target == null) return;
-
-  const { data: credited } = await admin
-    .from('provider_ledger_entries')
-    .select('amount')
+  // Supplements are NOT credited here. Each one is credited by
+  // creditSettledSupplement(), keyed on supplement_id with a unique index, so
+  // there is exactly one writer and a replay cannot pay twice. What this does
+  // is settle the supplements that were riding on the fare's own hold: once
+  // that hold is captured, they are collected by definition.
+  const { data: onTheHold } = await admin
+    .from('request_supplements')
+    .select('id')
     .eq('request_id', requestId)
-    .in('entry_type', ['earning', 'supplement']);
-  const already = (credited ?? []).reduce((sum, e) => sum + Number(e.amount), 0);
+    .eq('status', 'approved')
+    .eq('payment_state', 'authorized');
 
-  const delta = Math.round((target - already) * 100) / 100;
-  if (delta > 0.005) {
-    await admin.from('provider_ledger_entries').insert({
-      company_id: companyId,
-      driver_id: request.driver_id,
-      request_id: requestId,
-      entry_type: 'supplement',
-      amount: delta,
-      available_at: availableAt,
-      description: 'Approved supplements, provider share',
-    } as never);
+  if (availableAt && onTheHold?.length) {
+    for (const supplement of onTheHold) {
+      await admin
+        .from('request_supplements')
+        .update({ payment_state: 'settled', payment_settled_at: availableAt } as never)
+        .eq('id', supplement.id);
+    }
+  }
+
+  // Credit every supplement Stripe has confirmed, including ones settled long
+  // before the job finished. Idempotent, so running it again costs nothing.
+  const { data: settled } = await admin
+    .from('request_supplements')
+    .select('id')
+    .eq('request_id', requestId)
+    .eq('status', 'approved')
+    .eq('payment_state', 'settled');
+  for (const supplement of settled ?? []) {
+    await creditSettledSupplement(supplement.id);
   }
 }
 
@@ -430,13 +504,25 @@ export async function releaseHeldEarnings(requestId: string): Promise<void> {
 }
 
 /**
- * An approved supplement changes what the customer owes. Try to add it to the
- * hold we already have; say so plainly when we cannot.
+ * An approved supplement changes what the customer owes. Collect it.
  *
- * Stripe will not always let an existing authorization grow — the increment is
- * only available on eligible card authorizations, and an already-captured
- * payment cannot be increased at all. Rather than pretend, the supplement is
- * marked 'uncollected' with the reason, and nothing is credited for it.
+ * TWO PATHS, AND THE SECOND IS THE ONE THAT ACTUALLY RUNS HERE
+ *  1. Add it to the hold we already have. Stripe only allows that when
+ *     incremental authorization was requested at creation, and Phase 7.1
+ *     established against real Stripe that THIS platform account is not
+ *     eligible for the feature at all — asking for it breaks every
+ *     authorization. So this path is attempted and expected to fail.
+ *  2. Charge the supplement on a PaymentIntent of its own.
+ *
+ * Nothing is treated as collected until Stripe says `succeeded`. An
+ * off-session charge that trips authentication lands in `requires_action`,
+ * which is neither collected nor failed and must not be flattened into
+ * either: one would credit money that never arrived, the other would abandon
+ * money the customer is still willing to pay.
+ *
+ * Idempotent by construction: the idempotency key is the supplement's id, and
+ * `request_supplements.stripe_payment_intent_id` is UNIQUE, so a retry
+ * re-attaches the same intent rather than creating a second charge.
  */
 export async function settleApprovedSupplement(supplementId: string): Promise<void> {
   const admin = createAdminClient();
@@ -446,15 +532,23 @@ export async function settleApprovedSupplement(supplementId: string): Promise<vo
     .select('*')
     .eq('id', supplementId)
     .maybeSingle();
-  if (!supplement || supplement.status !== 'approved' || supplement.payment_state !== 'pending') return;
+  if (!supplement || supplement.status !== 'approved') return;
+  // Only ever act on a supplement nobody has charged yet. 'requires_action'
+  // is deliberately excluded: that money is already in flight.
+  if (supplement.payment_state !== 'pending') return;
 
-  const mark = async (state: string, note: string | null) => {
+  const mark = async (
+    state: string,
+    note: string | null,
+    extra: Record<string, unknown> = {}
+  ) => {
     await admin
       .from('request_supplements')
       .update({
         payment_state: state,
         payment_note: note,
-        payment_settled_at: state === 'pending' ? null : new Date().toISOString(),
+        payment_settled_at: state === 'settled' ? new Date().toISOString() : null,
+        ...extra,
       } as never)
       .eq('id', supplementId);
   };
@@ -467,7 +561,7 @@ export async function settleApprovedSupplement(supplementId: string): Promise<vo
 
   const { data: request } = await admin
     .from('requests')
-    .select('id, price_estimate')
+    .select('id, user_id, price_estimate')
     .eq('id', supplement.request_id)
     .single();
 
@@ -479,47 +573,279 @@ export async function settleApprovedSupplement(supplementId: string): Promise<vo
     .limit(1)
     .maybeSingle();
 
-  if (!payment?.stripe_payment_intent_id) {
-    await mark('uncollected', 'There is no card authorization on this request to add to.');
-    return;
+  const stripe = getStripe();
+  const amountCents = Math.round(Number(supplement.amount) * 100);
+
+  // ---- path 1: grow the hold we already have --------------------------
+  if (payment?.stripe_payment_intent_id && payment.status === 'authorized') {
+    const { data: approved } = await admin
+      .from('request_supplements')
+      .select('amount, payment_state')
+      .eq('request_id', supplement.request_id)
+      .eq('status', 'approved');
+    const securedSoFar = (approved ?? [])
+      .filter((x) => x.payment_state === 'authorized' || x.payment_state === 'settled')
+      .reduce((sum, x) => sum + Number(x.amount), 0);
+    const newTotal = Number(request?.price_estimate ?? 0) + securedSoFar + Number(supplement.amount);
+
+    try {
+      await stripe.paymentIntents.incrementAuthorization(
+        payment.stripe_payment_intent_id,
+        { amount: Math.round(newTotal * 100) },
+        { idempotencyKey: `supplement-${supplementId}` }
+      );
+      await admin
+        .from('payments')
+        .update({ amount: Math.round(newTotal * 100) / 100 })
+        .eq('id', payment.id);
+      await mark('authorized', null, { collection_method: 'incremental_authorization' });
+      revalidatePath('/dashboard/driver');
+      return;
+    } catch {
+      // Expected on this account. Fall through to the separate charge rather
+      // than giving up, which is what Phase 7 did.
+    }
   }
-  if (payment.status !== 'authorized') {
-    await mark('uncollected', `The payment is already ${payment.status}; collect this supplement separately.`);
+
+  // ---- path 2: a PaymentIntent of the supplement's own -----------------
+  const { data: profile } = await admin
+    .from('profiles')
+    .select('stripe_customer_id')
+    .eq('id', request!.user_id)
+    .single();
+
+  if (!profile?.stripe_customer_id) {
+    await mark('uncollected', 'The customer has no saved payment method to charge the supplement to.');
     return;
   }
 
-  const { data: approved } = await admin
+  const methods = await stripe.paymentMethods.list({
+    customer: profile.stripe_customer_id,
+    type: 'card',
+  });
+  const customer = await stripe.customers.retrieve(profile.stripe_customer_id);
+  const defaultId =
+    !customer.deleted && typeof customer.invoice_settings?.default_payment_method === 'string'
+      ? customer.invoice_settings.default_payment_method
+      : null;
+  const paymentMethodId = defaultId ?? methods.data[0]?.id;
+  if (!paymentMethodId) {
+    await mark('uncollected', 'The customer has no saved card to charge the supplement to.');
+    return;
+  }
+
+  try {
+    const intent = await stripe.paymentIntents.create(
+      {
+        amount: amountCents,
+        currency: 'cad',
+        customer: profile.stripe_customer_id,
+        payment_method: paymentMethodId,
+        // Captured immediately, unlike the fare. The fare is authorized at
+        // request time and captured on completion because the work might not
+        // happen; a supplement is approved for work that is happening, for an
+        // amount the customer has just agreed to. Holding it would only
+        // create a second capture to forget about.
+        confirm: true,
+        off_session: true,
+        description: `TowConnect supplement — ${supplement.type_key}`,
+        metadata: {
+          towconnect_request_id: supplement.request_id,
+          towconnect_supplement_id: supplementId,
+        },
+      },
+      { idempotencyKey: `supplement-intent-${supplementId}` }
+    );
+
+    if (intent.status === 'succeeded') {
+      await mark('settled', null, {
+        stripe_payment_intent_id: intent.id,
+        collection_method: 'separate_payment_intent',
+      });
+      // The webhook is the authority and will do this too; doing it here as
+      // well means the provider is credited without waiting for a delivery
+      // that may be seconds or minutes away. Both paths are idempotent.
+      await creditSettledSupplement(supplementId);
+    } else if (intent.status === 'requires_action' || intent.status === 'requires_confirmation') {
+      await mark('requires_action', 'The customer must authenticate this charge with their bank.', {
+        stripe_payment_intent_id: intent.id,
+        collection_method: 'separate_payment_intent',
+      });
+    } else {
+      await mark('uncollected', `Stripe left the supplement charge at ${intent.status}.`, {
+        stripe_payment_intent_id: intent.id,
+        collection_method: 'separate_payment_intent',
+      });
+    }
+  } catch (e) {
+    // An off-session confirm that needs authentication comes back as an ERROR
+    // carrying the PaymentIntent — the same shape the fare's authorization
+    // path had to learn about in Phase 4. Treating it as a decline would tell
+    // the customer their card failed while their bank is still asking them.
+    const cardError = e instanceof Stripe.errors.StripeCardError ? e : null;
+    const intent = cardError?.payment_intent;
+    const needsAuthentication =
+      Boolean(intent?.client_secret) &&
+      (cardError?.code === 'authentication_required' || intent?.status === 'requires_action');
+
+    if (cardError && intent && needsAuthentication) {
+      await mark('requires_action', 'The customer must authenticate this charge with their bank.', {
+        stripe_payment_intent_id: intent.id,
+        collection_method: 'separate_payment_intent',
+      });
+      return;
+    }
+
+    await mark(
+      'failed',
+      e instanceof Error ? `The supplement could not be charged: ${e.message.slice(0, 200)}` : 'Charge failed.',
+      { collection_method: 'separate_payment_intent' }
+    );
+  }
+
+  revalidatePath('/dashboard/driver');
+  revalidatePath('/request');
+}
+
+/**
+ * Credit a supplement to the provider — once, and only once Stripe confirms.
+ *
+ * The provider's share is computed from the job's FROZEN configuration, never
+ * from whatever is active today: the supplement belongs to a job that was
+ * agreed under a particular set of economics, and a later commission change
+ * must not reach backwards into it.
+ *
+ * It is computed on the WHOLE job at its new total, then reduced by what has
+ * already been credited. Splitting the supplement alone would re-apply the
+ * per-job floors and caps a second time.
+ *
+ * `provider_ledger_entries.supplement_id` is UNIQUE, so calling this twice —
+ * from the confirm path and from the webhook, which is exactly what happens —
+ * writes nothing the second time.
+ */
+export async function creditSettledSupplement(supplementId: string): Promise<void> {
+  const admin = createAdminClient();
+
+  const { data: supplement } = await admin
+    .from('request_supplements')
+    .select('id, request_id, amount, status, payment_state')
+    .eq('id', supplementId)
+    .maybeSingle();
+  if (!supplement || supplement.status !== 'approved' || supplement.payment_state !== 'settled') return;
+
+  const { data: request } = await admin
+    .from('requests')
+    .select('id, driver_id, price_estimate, partner_amount, pricing_config_id')
+    .eq('id', supplement.request_id)
+    .maybeSingle();
+  // No frozen compensation means no economic configuration was active when
+  // this job was accepted. Inventing a share now is exactly what the snapshot
+  // exists to prevent.
+  if (!request?.driver_id || request.partner_amount == null) return;
+
+  const { data: companyIdRaw } = await admin.rpc('driver_company_id' as never, {
+    p_profile_id: request.driver_id,
+  } as never);
+  const companyId = companyIdRaw as unknown as string | null;
+  if (!companyId) return;
+
+  // The marginal share of THIS supplement: what the job would pay with it,
+  // minus what it would pay without it.
+  //
+  // Not "recompute the job and subtract what the ledger already holds" —
+  // that was the first version and it was wrong. A supplement is collected
+  // the moment the customer approves it, which is usually BEFORE the job
+  // finishes, so the base earning does not exist yet and the subtraction had
+  // nothing to subtract: the supplement was credited the provider's share of
+  // the entire fare. Computing the difference between two settlements needs
+  // no ledger state at all, so it cannot depend on what has happened yet.
+  const { data: config } = request.pricing_config_id
+    ? await admin.from('pricing_configs').select('*').eq('id', request.pricing_config_id).maybeSingle()
+    : { data: null };
+  const economics = toEconomicConfig(config);
+
+  // Other supplements already credited on this job form the baseline, so the
+  // per-job floors and caps are applied once across the whole job however
+  // many supplements arrive and in whatever order.
+  const { data: siblings } = await admin
     .from('request_supplements')
     .select('id, amount, payment_state')
-    .eq('request_id', supplement.request_id)
-    .eq('status', 'approved');
+    .eq('request_id', request.id)
+    .eq('status', 'approved')
+    .eq('payment_state', 'settled')
+    .neq('id', supplementId);
+  const { data: siblingEntries } = await admin
+    .from('provider_ledger_entries')
+    .select('supplement_id')
+    .eq('request_id', request.id)
+    .not('supplement_id', 'is', null);
+  const creditedSiblingIds = new Set((siblingEntries ?? []).map((e) => e.supplement_id));
+  const priorSecured = (siblings ?? [])
+    .filter((x) => creditedSiblingIds.has(x.id))
+    .reduce((sum, x) => sum + Number(x.amount), 0);
 
-  const securedSoFar = (approved ?? [])
-    .filter((s) => s.payment_state === 'authorized' || s.payment_state === 'settled')
-    .reduce((sum, s) => sum + Number(s.amount), 0);
-  const newTotal = Number(request?.price_estimate ?? 0) + securedSoFar + Number(supplement.amount);
-  const cents = Math.round(newTotal * 100);
+  const base = Number(request.price_estimate ?? 0);
+  const without = settle(base + priorSecured, economics).providerCompensation;
+  const withThis = settle(base + priorSecured + Number(supplement.amount), economics).providerCompensation;
+  if (without == null || withThis == null) return;
 
-  const stripe = getStripe();
-  try {
-    await stripe.paymentIntents.incrementAuthorization(
-      payment.stripe_payment_intent_id,
-      { amount: cents },
-      { idempotencyKey: `supplement-${supplementId}` }
-    );
-  } catch (e) {
-    await mark(
-      'uncollected',
-      e instanceof Error
-        ? `The authorization could not be increased: ${e.message.slice(0, 200)}`
-        : 'The authorization could not be increased.'
-    );
-    return;
+  const delta = Math.round((withThis - without) * 100) / 100;
+  if (delta <= 0.005) return;
+
+  await admin.from('provider_ledger_entries').insert({
+    company_id: companyId,
+    driver_id: request.driver_id,
+    request_id: request.id,
+    supplement_id: supplementId,
+    entry_type: 'supplement',
+    amount: delta,
+    // The money is captured, so it is payable. Unlike the fare, a supplement
+    // is never credited before Stripe has confirmed it.
+    available_at: new Date().toISOString(),
+    description: 'Approved supplement, provider share',
+  } as never);
+}
+
+/**
+ * Reconcile one supplement against Stripe.
+ *
+ * Called by the webhook, and available to support when somebody asks why a
+ * supplement is stuck. Stripe is the authority: whatever the intent says now
+ * is what the row becomes.
+ */
+export async function reconcileSupplementIntent(intentId: string): Promise<void> {
+  const admin = createAdminClient();
+  const { data: supplement } = await admin
+    .from('request_supplements')
+    .select('id, payment_state')
+    .eq('stripe_payment_intent_id', intentId)
+    .maybeSingle();
+  if (!supplement) return;
+  if (!isStripeConfigured()) return;
+
+  const intent = await getStripe().paymentIntents.retrieve(intentId);
+  const state =
+    intent.status === 'succeeded'
+      ? 'settled'
+      : intent.status === 'requires_action' || intent.status === 'requires_confirmation'
+        ? 'requires_action'
+        : intent.status === 'canceled'
+          ? 'uncollected'
+          : intent.status === 'requires_payment_method'
+            ? 'failed'
+            : supplement.payment_state;
+
+  if (state !== supplement.payment_state) {
+    await admin
+      .from('request_supplements')
+      .update({
+        payment_state: state,
+        payment_settled_at: state === 'settled' ? new Date().toISOString() : null,
+      } as never)
+      .eq('id', supplement.id);
   }
 
-  await admin.from('payments').update({ amount: Math.round(newTotal * 100) / 100 }).eq('id', payment.id);
-  await mark('authorized', null);
-  revalidatePath('/dashboard/driver');
+  if (state === 'settled') await creditSettledSupplement(supplement.id);
 }
 
 // ---------------------------------------------------------- cancellations

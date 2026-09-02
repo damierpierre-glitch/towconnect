@@ -45,10 +45,20 @@ export function Receipt({
   const surcharge = toMoney(request.price_surcharge);
   const towKm = request.tow_distance_km == null ? null : toMoney(request.tow_distance_km);
 
-  // Only approved supplements are money. A proposed one is a question the
-  // customer has not answered, and it does not belong on a receipt.
+  // Approved is not the same as charged. A supplement the customer agreed to
+  // but that could not be collected must not appear as money they paid — it
+  // is listed separately, and it is not in the total.
   const approvedSupplements = supplements.filter((s) => s.status === 'approved');
-  const supplementTotal = approvedSupplements.reduce((sum, s) => sum + toMoney(s.amount), 0);
+  const chargedSupplements = approvedSupplements.filter(
+    (s) => s.payment_state === 'settled' || s.payment_state === 'authorized'
+  );
+  const pendingSupplements = approvedSupplements.filter(
+    (s) => s.payment_state === 'requires_action' || s.payment_state === 'pending'
+  );
+  const uncollectedSupplements = approvedSupplements.filter(
+    (s) => s.payment_state === 'uncollected' || s.payment_state === 'failed'
+  );
+  const supplementTotal = chargedSupplements.reduce((sum, s) => sum + toMoney(s.amount), 0);
   const cancellationFee = request.cancellation_fee_charged == null ? 0 : toMoney(request.cancellation_fee_charged);
   const refundedTotal = refunds
     .filter((r) => r.status === 'succeeded')
@@ -102,7 +112,7 @@ export function Receipt({
             value={distance}
           />
           {surcharge > 0 ? <PriceLine label={lang === 'fr' ? 'Supplément' : 'Surcharge'} value={surcharge} /> : null}
-          {approvedSupplements.map((s) => (
+          {chargedSupplements.map((s) => (
             <PriceLine key={s.id} label={`${t('fin_receipt_supplement')} · ${s.type_key}`} value={toMoney(s.amount)} />
           ))}
           {cancellationFee > 0 ? (
@@ -128,6 +138,36 @@ export function Receipt({
             </>
           ) : null}
         </div>
+
+        {pendingSupplements.length > 0 || uncollectedSupplements.length > 0 ? (
+          <div className="bg-night-3 border border-steel rounded-xl p-4 mb-4">
+            <p className="text-xs font-semibold text-text-2 mb-2">
+              {lang === 'fr' ? 'Suppléments non facturés' : 'Supplements not charged'}
+            </p>
+            {pendingSupplements.map((s) => (
+              <div key={s.id} className="flex justify-between text-xs text-yellow py-0.5">
+                <span>{s.type_key}</span>
+                <span>
+                  {lang === 'fr' ? 'en attente de votre banque' : 'waiting on your bank'} · $
+                  {toMoney(s.amount).toFixed(2)}
+                </span>
+              </div>
+            ))}
+            {uncollectedSupplements.map((s) => (
+              <div key={s.id} className="flex justify-between text-xs text-muted py-0.5">
+                <span>{s.type_key}</span>
+                <span>
+                  {lang === 'fr' ? 'non facturé' : 'not charged'} · ${toMoney(s.amount).toFixed(2)}
+                </span>
+              </div>
+            ))}
+            <p className="text-[11px] text-muted mt-2">
+              {lang === 'fr'
+                ? 'Ces montants ne sont pas inclus dans le total ci-dessus et ne vous ont pas été débités.'
+                : 'These amounts are not included in the total above and have not been charged to you.'}
+            </p>
+          </div>
+        ) : null}
 
         {payment ? (
           <div className="bg-night-3 border border-steel rounded-xl p-4">

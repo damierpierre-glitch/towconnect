@@ -207,6 +207,12 @@ async function main() {
   const ownerB = await makeActor('user', 'ownerB');
   const platformAdmin = await makeActor('user', 'admin');
   await admin.from('profiles').update({ role: 'admin' }).eq('id', platformAdmin.id);
+  // Explicit since 0044. Until then an admin with no grants held everything,
+  // and this fixture relied on that; now nothing is implicit and the harness
+  // has to say what it is exercising, which is the point of the change.
+  await admin
+    .from('admin_grants')
+    .insert({ profile_id: platformAdmin.id, capability: 'super_admin' } as never);
   adminTokenForCleanup = platformAdmin.token;
 
   const { error: driverSetupError } = await admin
@@ -563,31 +569,117 @@ async function main() {
       .eq('id', proposed!.id)
       .single();
     ok('the customer approved it', settledSupplement!.status === 'approved');
+
+    // Phase 8.1: the point of the fallback is that "approved" now leads to
+    // "collected". `uncollected` is still a legitimate outcome, but it must be
+    // the exception rather than the only path.
     ok(
-      'the outcome of the money is recorded, not assumed',
-      ['authorized', 'uncollected'].includes(settledSupplement!.payment_state as string),
-      `payment_state ${settledSupplement!.payment_state}`
+      'the supplement was collected rather than abandoned',
+      settledSupplement!.payment_state === 'settled',
+      `payment_state ${settledSupplement!.payment_state}: ${settledSupplement!.payment_note ?? 'no note'}`
+    );
+    ok(
+      'it was collected on a PaymentIntent of its own',
+      settledSupplement!.collection_method === 'separate_payment_intent',
+      String(settledSupplement!.collection_method)
     );
     record(
       'note',
-      `supplement payment path taken: ${settledSupplement!.payment_state}`,
-      (settledSupplement!.payment_note as string | null) ?? 'the authorization was increased'
+      'incremental authorization was attempted first and refused',
+      'this account is not eligible for the feature — see TOWCONNECT_PHASE7_1_REPORT.md §4'
+    );
+
+    const supplementIntentId = settledSupplement!.stripe_payment_intent_id as string;
+    ok('a supplement PaymentIntent id was stored', Boolean(supplementIntentId));
+
+    const supplementIntent = await stripe.paymentIntents.retrieve(supplementIntentId);
+    ok(
+      'Stripe confirms the supplement charge succeeded for the right amount',
+      supplementIntent.status === 'succeeded' && supplementIntent.amount === 2500,
+      `${supplementIntent.status} / ${supplementIntent.amount}`
+    );
+    ok(
+      'the supplement intent carries the metadata that routes its webhooks',
+      supplementIntent.metadata?.towconnect_supplement_id === proposed!.id
     );
 
     const intentAfterSupplement = await stripe.paymentIntents.retrieve(payment1!.stripe_payment_intent_id!);
-    if (settledSupplement!.payment_state === 'authorized') {
-      ok(
-        'Stripe really increased the authorization',
-        intentAfterSupplement.amount > intentBeforeSupplement.amount,
-        `${intentBeforeSupplement.amount} -> ${intentAfterSupplement.amount}`
-      );
-    } else {
-      ok(
-        'an uncollected supplement did not change what the customer is charged',
-        intentAfterSupplement.amount === intentBeforeSupplement.amount,
-        `${intentBeforeSupplement.amount} -> ${intentAfterSupplement.amount}`
-      );
-    }
+    ok(
+      'the fare authorization was left exactly as it was',
+      intentAfterSupplement.amount === intentBeforeSupplement.amount,
+      `${intentBeforeSupplement.amount} -> ${intentAfterSupplement.amount}`
+    );
+
+    // ---- the provider is credited once, from the FROZEN configuration ----
+    const supplementExpected = settle(customerPrice + 25, {
+      commissionPercent: 18,
+      paymentProcessingPercent: 2.9,
+      paymentProcessingFixed: 0.3,
+    });
+    const expectedSupplementShare =
+      Math.round((supplementExpected.providerCompensation! - expected.providerCompensation!) * 100) / 100;
+
+    const { data: supplementEntries } = await admin
+      .from('provider_ledger_entries')
+      .select('*')
+      .eq('supplement_id', proposed!.id);
+    ok(
+      'exactly one ledger entry exists for the supplement',
+      (supplementEntries ?? []).length === 1,
+      `${(supplementEntries ?? []).length} entries`
+    );
+    ok(
+      "the credit uses the job's frozen configuration, not today's",
+      (supplementEntries ?? []).length === 1 &&
+        near(money(supplementEntries![0].amount), expectedSupplementShare),
+      `${supplementEntries?.[0]?.amount} vs ${expectedSupplementShare}`
+    );
+    ok(
+      'the supplement credit is payable, because the money was actually taken',
+      (supplementEntries ?? []).length === 1 && supplementEntries![0].available_at != null
+    );
+
+    // Replaying the credit must write nothing: the unique index on
+    // supplement_id is what makes that structural rather than remembered.
+    const { creditSettledSupplement } = await import('@/lib/actions/finance');
+    await creditSettledSupplement(proposed!.id);
+    const { data: afterReplayCredit } = await admin
+      .from('provider_ledger_entries')
+      .select('id')
+      .eq('supplement_id', proposed!.id);
+    ok(
+      'crediting the same supplement twice writes nothing the second time',
+      (afterReplayCredit ?? []).length === 1,
+      `${(afterReplayCredit ?? []).length} entries after replay`
+    );
+
+    // Settling it again must not create a second charge either.
+    const { settleApprovedSupplement } = await import('@/lib/actions/finance');
+    await settleApprovedSupplement(proposed!.id);
+    const { data: afterReplaySettle } = await admin
+      .from('request_supplements')
+      .select('stripe_payment_intent_id')
+      .eq('id', proposed!.id)
+      .single();
+    ok(
+      'settling an already-collected supplement does not charge the customer twice',
+      afterReplaySettle!.stripe_payment_intent_id === supplementIntentId,
+      `${supplementIntentId} -> ${afterReplaySettle!.stripe_payment_intent_id}`
+    );
+
+    // ---- the customer's receipt tells the truth about it ----------------
+    const { data: receiptSupplements } = await admin
+      .from('request_supplements')
+      .select('amount, status, payment_state')
+      .eq('request_id', created.requestId);
+    const chargedOnReceipt = (receiptSupplements ?? [])
+      .filter((x) => x.status === 'approved' && (x.payment_state === 'settled' || x.payment_state === 'authorized'))
+      .reduce((sum, x) => sum + money(x.amount), 0);
+    ok(
+      'the receipt would show the supplement as charged',
+      near(chargedOnReceipt, 25),
+      `$${chargedOnReceipt.toFixed(2)} shown as charged`
+    );
 
     // ================================================================
     sect('5. Completion, capture and the provider ledger');
@@ -643,16 +735,17 @@ async function main() {
       earnings.length === 1 && earnings[0].available_at != null,
       'the earning was left pending after a successful capture'
     );
-    const supplementEntries = (ledger1 ?? []).filter((e) => e.entry_type === 'supplement');
-    if (settledSupplement!.payment_state === 'uncollected') {
-      ok(
-        'an uncollected supplement credited the provider nothing',
-        supplementEntries.length === 0,
-        `${supplementEntries.length} supplement entries for money that was never collected`
-      );
-    } else {
-      ok('a collected supplement credited the provider once', supplementEntries.length === 1);
-    }
+    const ledgerSupplements = (ledger1 ?? []).filter((e) => e.entry_type === 'supplement');
+    ok(
+      'the collected supplement credited the provider exactly once',
+      ledgerSupplements.length === 1,
+      `${ledgerSupplements.length} supplement entries`
+    );
+    ok(
+      'every supplement credit is keyed to the supplement it paid for',
+      ledgerSupplements.every((e) => e.supplement_id != null),
+      'a supplement entry has no supplement_id, so a replay could duplicate it'
+    );
 
     // Replay: running the credit again must not double-pay.
     const { recordJobEarning } = await import('@/lib/actions/finance');
@@ -721,6 +814,7 @@ async function main() {
       .select('*')
       .eq('request_id', created.requestId)
       .eq('entry_type', 'refund_reversal');
+    record('note', 'partial refund is against the fare, not the supplement', 'the supplement has its own charge and its own refund path');
     const providerShare = frozenBefore.partner / customerPrice;
     const expectedClawback = Math.round(partialAmount * providerShare * 100) / 100;
     ok('exactly one reversal entry was written', (reversals ?? []).length === 1);
@@ -747,6 +841,68 @@ async function main() {
       overRefundRefused = true;
     }
     ok('refunding more than remains is refused', overRefundRefused);
+
+    // ================================================================
+    sect('7c. Refunding a supplement on its own charge');
+    // ================================================================
+    // The supplement has its own PaymentIntent, so it must be refundable
+    // without touching the fare the customer already accepted — and refunding
+    // it must claw back only the provider's share OF THAT SUPPLEMENT.
+    actAs(platformAdmin.token, 'platform admin');
+    const supplementRefundAmount = 10;
+    const supplementRefund = await issueRefund({
+      requestId: created.requestId,
+      supplementId: proposed!.id,
+      amount: supplementRefundAmount,
+      reason: 'Phase 8.1 — partial supplement refund',
+    });
+    ok('the supplement refund succeeded', supplementRefund.status === 'succeeded', supplementRefund.status as string);
+    ok('the refund row names the supplement it belongs to', supplementRefund.supplement_id === proposed!.id);
+
+    const supplementStripeRefund = await stripe.refunds.retrieve(supplementRefund.stripe_refund_id!);
+    ok(
+      'Stripe refunded it against the supplement intent, not the fare',
+      supplementStripeRefund.payment_intent === supplementIntentId,
+      String(supplementStripeRefund.payment_intent)
+    );
+
+    const fareIntentAfterSupplementRefund = await stripe.paymentIntents.retrieve(
+      payment1!.stripe_payment_intent_id!
+    );
+    ok(
+      'the fare charge was untouched by the supplement refund',
+      fareIntentAfterSupplementRefund.amount_received === intentAfterCapture.amount_received,
+      `${intentAfterCapture.amount_received} -> ${fareIntentAfterSupplementRefund.amount_received}`
+    );
+
+    const { data: supplementReversals } = await admin
+      .from('provider_ledger_entries')
+      .select('amount, metadata')
+      .eq('request_id', created.requestId)
+      .eq('entry_type', 'refund_reversal');
+    const supplementClawback = supplementReversals?.find(
+      (e) => (e.metadata as { supplement_id?: string } | null)?.supplement_id === proposed!.id
+    );
+    const expectedSupplementClawback =
+      Math.round(supplementRefundAmount * (expectedSupplementShare / 25) * 100) / 100;
+    ok(
+      "the clawback is proportional to the provider's share of that supplement",
+      supplementClawback != null && near(Math.abs(money(supplementClawback.amount)), expectedSupplementClawback),
+      `${supplementClawback?.amount} vs -${expectedSupplementClawback}`
+    );
+
+    let overRefundSupplementRefused = false;
+    try {
+      await issueRefund({
+        requestId: created.requestId,
+        supplementId: proposed!.id,
+        amount: 25,
+        reason: 'Phase 8.1 — deliberate over-refund of a supplement',
+      });
+    } catch {
+      overRefundSupplementRefused = true;
+    }
+    ok('refunding more than the supplement is worth is refused', overRefundSupplementRefused);
 
     // ================================================================
     sect('7b. Webhook replay and idempotency');
@@ -1172,29 +1328,84 @@ async function main() {
         `$${price.toFixed(2)} vs $${sum.toFixed(2)} (drift $${drift.toFixed(4)})`
       );
 
+      // The fare and each supplement are separate charges with separate
+      // refunds, so the expected net has to be built the same way rather than
+      // treating every refund as if it came out of the fare.
       const { data: refundRows } = await admin
         .from('refunds')
-        .select('amount, status')
+        .select('amount, status, supplement_id')
         .eq('request_id', requestId);
-      const refunded = (refundRows ?? [])
-        .filter((x) => x.status === 'succeeded')
-        .reduce((s, x) => s + money(x.amount), 0);
+      const succeeded = (refundRows ?? []).filter((x) => x.status === 'succeeded');
+
       const { data: entries } = await admin
         .from('provider_ledger_entries')
-        .select('amount, entry_type')
+        .select('amount, entry_type, supplement_id')
         .eq('request_id', requestId);
       const providerNet = (entries ?? []).reduce((s, e) => s + money(e.amount), 0);
-      // A job that never completed was priced but never earned. Its frozen
-      // partner_amount says what WOULD have been owed, not what is: expecting
-      // a credit for work that did not happen is how a cancelled job turns
-      // into a payable.
+
+      // A job that never completed was priced but never earned.
       const earned = r.status === 'completed' ? money(r.partner_amount) : 0;
-      const expectedNet = earned - Math.round(refunded * (earned / price) * 100) / 100;
+      const fareRefunded = succeeded
+        .filter((x) => x.supplement_id == null)
+        .reduce((s, x) => s + money(x.amount), 0);
+      let expectedNet = earned - Math.round(fareRefunded * (earned / price) * 100) / 100;
+
+      const { data: supplementRows } = await admin
+        .from('request_supplements')
+        .select('id, amount, payment_state')
+        .eq('request_id', requestId);
+      for (const supplement of supplementRows ?? []) {
+        const credit = (entries ?? []).find((e) => e.supplement_id === supplement.id);
+        if (!credit) continue;
+        const creditAmount = money(credit.amount);
+        const refundedHere = succeeded
+          .filter((x) => x.supplement_id === supplement.id)
+          .reduce((s, x) => s + money(x.amount), 0);
+        const clawback =
+          Math.round(refundedHere * (creditAmount / money(supplement.amount)) * 100) / 100;
+        expectedNet += creditAmount - clawback;
+      }
+
       record(
         near(providerNet, expectedNet, 0.02) ? 'pass' : 'fail',
         `${label}: provider net after refunds`,
-        `ledger $${providerNet.toFixed(2)} vs expected $${expectedNet.toFixed(2)} (refunded $${refunded.toFixed(2)})`
+        `ledger $${providerNet.toFixed(2)} vs expected $${expectedNet.toFixed(2)} ` +
+          `(fare refunded $${fareRefunded.toFixed(2)}, total refunded $${succeeded
+            .reduce((s, x) => s + money(x.amount), 0)
+            .toFixed(2)})`
       );
+
+      // Each supplement obeys the same identity as the fare, on the job's
+      // FROZEN configuration — to the cent.
+      for (const supplement of supplementRows ?? []) {
+        if (supplement.payment_state !== 'settled') continue;
+        const credit = (entries ?? []).find((e) => e.supplement_id === supplement.id);
+        if (!credit) continue;
+        const amount = money(supplement.amount);
+        const providerPart = money(credit.amount);
+        const frozen = {
+          commissionPercent: 18,
+          paymentProcessingPercent: 2.9,
+          paymentProcessingFixed: 0.3,
+        };
+        // Marginal by construction: with the supplement, minus without it.
+        const withThis = settle(price + amount, frozen);
+        const without = settle(price, frozen);
+        const expectedProvider =
+          Math.round((withThis.providerCompensation! - without.providerCompensation!) * 100) / 100;
+        const expectedProcessing =
+          Math.round((withThis.paymentProcessingCost! - without.paymentProcessingCost!) * 100) / 100;
+        const expectedMargin =
+          Math.round((withThis.towconnectMargin! - without.towconnectMargin!) * 100) / 100;
+        const sum = expectedProvider + expectedProcessing + expectedMargin;
+        record(
+          near(providerPart, expectedProvider) && near(sum, amount, 0.02) ? 'pass' : 'fail',
+          `${label}: supplement identity`,
+          `customer $${amount.toFixed(2)} = provider $${expectedProvider.toFixed(2)} ` +
+            `+ TowConnect $${expectedMargin.toFixed(2)} + processing $${expectedProcessing.toFixed(2)} ` +
+            `(ledger credited $${providerPart.toFixed(2)})`
+        );
+      }
     };
 
     await reconcile(created.requestId, 'main course');
@@ -1315,6 +1526,7 @@ async function main() {
     // authored is deletable now that the configuration is gone.
     const undeletable: string[] = [];
     for (const userId of createdUserIds) {
+      await admin.from('admin_grants').delete().eq('profile_id', userId);
       const { data: stillThere } = await admin.from('profiles').select('id').eq('id', userId).maybeSingle();
       if (!stillThere) continue;
       const { error } = await admin.auth.admin.deleteUser(userId);

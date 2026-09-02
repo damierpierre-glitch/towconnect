@@ -371,7 +371,7 @@ export function StepTracking({
       {/* Any supplement the driver proposes appears here, unapproved, with
           the customer holding the only accept button. Nothing is added to
           what they pay until they press it. */}
-      <SupplementsPanel requestId={requestId} role="customer" />
+      <SupplementsPanel requestId={requestId} role="customer" basePrice={price ?? undefined} />
 
       <div className="grid grid-cols-2 gap-3 mb-5">
         <div className="text-center">

@@ -3246,18 +3246,17 @@ async function run(): Promise<Result[]> {
         .update({ role: 'admin' })
         .in('id', [opsAdmin.id, financeAdmin.id, supportAdmin.id]);
 
-      // Before any grant exists, an admin is unscoped and keeps full access.
-      // That grandfather rule is what let Phase 8 ship without locking the
-      // platform's existing operators out of it, so it is asserted rather
-      // than assumed.
+      // Phase 8.1 removed the grandfather rule (0044). An admin holding no
+      // grant now holds NOTHING — asserted before anything is granted, because
+      // this is the assumption every capability check below rests on.
       const { data: unscopedCanFinance } = await financeAdmin.client.rpc(
         'has_admin_capability' as never,
         { p_capability: 'finance' } as never
       );
       results.push({
-        name: 'an admin with no grants keeps full access (the grandfather rule)',
-        pass: unscopedCanFinance === true,
-        detail: 'an unscoped admin was refused, which would lock out every existing operator',
+        name: 'an admin with no grants holds no capability at all',
+        pass: unscopedCanFinance !== true,
+        detail: 'an unscoped admin still held finance — the grandfather rule is back',
       });
 
       await admin.from('admin_grants').insert([
@@ -3517,9 +3516,59 @@ async function run(): Promise<Result[]> {
         detail: 'an admin inserted a fabricated incident event',
       });
 
+      // 9. Revoking the LAST capability must revoke access. Under the old
+      //    grandfather rule it did the opposite — it handed the account
+      //    everything — which is precisely why that rule could not stay.
+      await admin
+        .from('admin_grants')
+        .delete()
+        .eq('profile_id', financeAdmin.id)
+        .eq('capability', 'finance');
+
+      const { data: afterRevokeFinance } = await financeAdmin.client.rpc(
+        'has_admin_capability' as never,
+        { p_capability: 'finance' } as never
+      );
+      const { data: afterRevokeOps } = await financeAdmin.client.rpc(
+        'has_admin_capability' as never,
+        { p_capability: 'operations' } as never
+      );
+      results.push({
+        name: 'revoking the last capability revokes access rather than granting everything',
+        pass: afterRevokeFinance !== true && afterRevokeOps !== true,
+        detail: 'an admin stripped of every capability regained privileged access',
+      });
+
+      const { data: strippedRefund } = await financeAdmin.client.rpc(
+        'is_refund_authorizer' as never,
+        {} as never
+      );
+      results.push({
+        name: 'a stripped admin can no longer authorize a refund',
+        pass: strippedRefund !== true,
+        detail: 'an admin with no capabilities was accepted as a refund authorizer',
+      });
+
+      const { error: strippedPricing } = await financeAdmin.client
+        .from('pricing_configs')
+        .insert({ version: 90002, label: 'stripped attempt', status: 'draft', commission_percent: 5 } as never);
+      results.push({
+        name: 'a stripped admin cannot write the platform economics',
+        pass: Boolean(strippedPricing),
+        detail: 'an admin with no capabilities wrote a pricing configuration',
+      });
+
+      // 10. The platform must always have somebody who can grant capabilities.
+      const { data: superAdmins } = await admin.rpc('ops_super_admin_count' as never, {} as never);
+      results.push({
+        name: 'at least one super admin still exists on this project',
+        pass: Number(superAdmins ?? 0) >= 1,
+        detail: 'nobody can grant capabilities any more',
+      });
+
       await admin.from('risk_flags').delete().eq('id', flagRow!.id);
       await admin.from('operational_incidents').delete().eq('id', incidentRow!.id);
-      await admin.from('pricing_configs').delete().eq('version', 90001);
+      await admin.from('pricing_configs').delete().in('version', [90001, 90002]);
 
       // ---- teardown ----
       await admin.from('requests').delete().eq('user_id', rider.id);

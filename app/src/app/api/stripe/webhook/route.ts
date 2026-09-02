@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import type { PaymentStatus } from '@/lib/supabase/types';
 import { isAuthenticationRequired } from '@/lib/stripe/payment-status';
 import { summariseAccount } from '@/lib/stripe/connect';
-import { releaseHeldEarnings } from '@/lib/actions/finance';
+import { reconcileSupplementIntent, releaseHeldEarnings } from '@/lib/actions/finance';
 
 // Stripe is the source of truth for payment state — this webhook is the
 // only thing that gets to call a payment truly settled. The optimistic
@@ -62,6 +62,15 @@ export async function POST(request: Request) {
 }
 
 async function handleEvent(event: Stripe.Event, admin: ReturnType<typeof createAdminClient>) {
+  // A supplement is charged on a PaymentIntent of its own (0045), so the
+  // payment_intent.* events below arrive for two different things. Routing on
+  // our own metadata rather than on shape: a supplement intent must never be
+  // written into `payments`, and a fare must never settle a supplement.
+  const intentForSupplement = (candidate: unknown): string | null => {
+    const intent = candidate as Stripe.PaymentIntent;
+    return intent?.metadata?.towconnect_supplement_id ? intent.id : null;
+  };
+
   switch (event.type) {
     // Fired once the authorization succeeds (manual capture) — the intent
     // becomes capturable. This is the authoritative "authorized" signal.
@@ -75,6 +84,10 @@ async function handleEvent(event: Stripe.Event, admin: ReturnType<typeof createA
     case 'payment_intent.amount_capturable_updated':
     case 'payment_intent.processing': {
       const intent = event.data.object as Stripe.PaymentIntent;
+      if (intentForSupplement(intent)) {
+        await reconcileSupplementIntent(intent.id);
+        break;
+      }
       await admin
         .from('payments')
         .update({ status: 'authorized' satisfies PaymentStatus })
@@ -85,6 +98,13 @@ async function handleEvent(event: Stripe.Event, admin: ReturnType<typeof createA
     // Fired on a successful capture.
     case 'payment_intent.succeeded': {
       const intent = event.data.object as Stripe.PaymentIntent;
+      if (intentForSupplement(intent)) {
+        // Stripe is the authority on whether a supplement was collected, and
+        // reconcile credits the provider — idempotently, because the confirm
+        // path may already have done it seconds earlier.
+        await reconcileSupplementIntent(intent.id);
+        break;
+      }
       await setStatusByIntentId(admin, intent.id, 'captured');
       // A capture that only succeeded here — after the driver closed the job,
       // or on a retry — left the provider's earning recorded but not payable.
@@ -95,6 +115,10 @@ async function handleEvent(event: Stripe.Event, admin: ReturnType<typeof createA
     }
     case 'payment_intent.payment_failed': {
       const intent = event.data.object as Stripe.PaymentIntent;
+      if (intentForSupplement(intent)) {
+        await reconcileSupplementIntent(intent.id);
+        break;
+      }
       const reason = intent.last_payment_error?.code ?? intent.last_payment_error?.decline_code ?? 'failed';
 
       if (isAuthenticationRequired(reason)) {
@@ -124,6 +148,10 @@ async function handleEvent(event: Stripe.Event, admin: ReturnType<typeof createA
     }
     case 'payment_intent.canceled': {
       const intent = event.data.object as Stripe.PaymentIntent;
+      if (intentForSupplement(intent)) {
+        await reconcileSupplementIntent(intent.id);
+        break;
+      }
       await setStatusByIntentId(admin, intent.id, 'canceled');
       break;
     }

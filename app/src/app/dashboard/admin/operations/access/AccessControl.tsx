@@ -12,12 +12,15 @@ import type { AdminCapability } from '@/lib/supabase/types';
 
 // Who may do what.
 //
-// THE GRANDFATHER RULE IS THE POINT OF THIS SCREEN
-// Every existing administrator can do everything today. If "no grant" had
-// meant "no access", this feature would have locked the platform's operators
-// out of it the moment it shipped. So an account with no grants keeps full
-// access, and narrowing somebody is a deliberate act performed here — which
-// is also why the first grant is the one that changes their world.
+// NO CAPABILITY MEANS NO CAPABILITY
+// It did not always. 0041 shipped these roles with a grandfather rule — an
+// admin holding no grant held everything — so that introducing them could not
+// lock out the people running the platform. 0044 removed it, after granting
+// super_admin explicitly to every administrator that existed.
+//
+// The rule that replaced it is the one worth knowing at this screen: revoking
+// somebody's LAST capability now revokes their access, rather than handing
+// them everything. That inversion is exactly why the old rule could not stay.
 
 const CAPABILITIES: { key: AdminCapability; fr: string; en: string; blurb: { fr: string; en: string } }[] = [
   {
@@ -97,8 +100,8 @@ export function AccessControl({
         </h2>
         <p className="text-xs text-text-2">
           {lang === 'fr'
-            ? 'Un administrateur sans aucune capacité attribuée conserve l’accès complet — c’est ce qui a permis d’introduire ces rôles sans verrouiller personne. Dès qu’une première capacité lui est donnée, il est restreint à ce qu’il détient. Retirer sa dernière capacité lui rend donc l’accès complet : c’est délibéré, mais cela surprend, alors sachez-le.'
-            : 'An administrator with no capabilities assigned keeps full access — that is what allowed these roles to be introduced without locking anybody out. The moment they are given their first capability, they are restricted to what they hold. Removing their last capability therefore restores full access: that is deliberate, but it surprises people, so it is worth knowing.'}
+            ? 'Un administrateur ne détient que ce qui lui est attribué. Retirer sa dernière capacité lui retire réellement l’accès — il reste administrateur au sens du compte, mais ne peut plus rien faire de privilégié. Assurez-vous qu’il reste au moins un super administrateur : sans lui, plus personne ne peut attribuer de capacité.'
+            : 'An administrator holds only what they are granted. Revoking their last capability genuinely revokes their access — the account stays an admin, but can do nothing privileged. Make sure at least one super administrator remains: without one, nobody can grant capabilities to anybody.'}
         </p>
       </Card>
 
@@ -126,8 +129,8 @@ export function AccessControl({
                 <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
                   <span className="text-sm font-medium">{account.name}</span>
                   {account.capabilities.length === 0 ? (
-                    <Badge tone="yellow">
-                      {lang === 'fr' ? 'accès complet (non restreint)' : 'full access (unscoped)'}
+                    <Badge tone="red">
+                      {lang === 'fr' ? 'aucun accès privilégié' : 'no privileged access'}
                     </Badge>
                   ) : (
                     <span className="flex gap-1.5 flex-wrap">

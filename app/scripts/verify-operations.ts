@@ -221,7 +221,46 @@ async function main() {
   const { data: scopedPolicies } = await admin.rpc('ops_threshold' as never, { p_key: 'offer_ttl' } as never);
   check('ops_threshold() resolves a known key', scopedPolicies != null, String(scopedPolicies));
 
-  // ---- 9. no probe residue ------------------------------------------
+  // ---- 9. the capability model, after 0044 --------------------------
+  // The grandfather rule is gone, which makes two facts load-bearing: every
+  // administrator must hold something, and somebody must still be able to
+  // grant. Neither is enforced by a constraint — a trigger firing on the last
+  // DELETE would be its own footgun — so they are asked here.
+  const { data: adminProfiles } = await admin.from('profiles').select('id').eq('role', 'admin');
+  const adminIds = (adminProfiles ?? []).map((a) => a.id);
+  const { data: grants } = adminIds.length
+    ? await admin.from('admin_grants').select('profile_id, capability').in('profile_id', adminIds)
+    : { data: [] as { profile_id: string; capability: string }[] };
+
+  const withoutAnyGrant = adminIds.filter(
+    (id) => !(grants ?? []).some((g) => g.profile_id === id)
+  );
+  check(
+    `every administrator holds at least one capability (${adminIds.length} admin(s))`,
+    withoutAnyGrant.length === 0,
+    `${withoutAnyGrant.length} admin account(s) can no longer do anything privileged`
+  );
+
+  const { data: superAdmins } = await admin.rpc('ops_super_admin_count' as never, {} as never);
+  check(
+    'at least one super admin can still grant capabilities',
+    Number(superAdmins ?? 0) >= 1,
+    `${superAdmins} super admin(s)`
+  );
+
+  const { data: capabilityDef } = await admin.rpc('has_admin_capability' as never, {
+    p_capability: 'operations',
+  } as never);
+  // Called with the service role, which is not an admin — so the honest
+  // answer is false. A `true` here would mean is_admin() is passing for
+  // something that has no profile at all.
+  check(
+    'has_admin_capability() answers false for a caller that is not an admin',
+    capabilityDef !== true,
+    String(capabilityDef)
+  );
+
+  // ---- 10. no probe residue -----------------------------------------
   const { data: probeIncidents } = await admin
     .from('operational_incidents')
     .select('id')

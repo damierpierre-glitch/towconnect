@@ -109,7 +109,7 @@ async function main() {
   // ---- 4. the ledger agrees with the jobs it came from ---------------
   const { data: entries } = await admin
     .from('provider_ledger_entries')
-    .select('id, company_id, request_id, entry_type, amount, available_at');
+    .select('id, company_id, request_id, entry_type, amount, available_at, supplement_id');
 
   const earningsByRequest = new Map<string, number>();
   for (const e of entries ?? []) {
@@ -211,22 +211,61 @@ async function main() {
   }
   check('no payment was refunded for more than it was worth', overRefunded.length === 0, overRefunded.join('; '));
 
-  // ---- 8. an approved supplement never credits money that was not taken ----
+  // ---- 8. a supplement credits only what Stripe confirmed --------------
+  // Phase 8.1 turned this from "uncollected must not credit" into the two
+  // halves it always was: nothing unconfirmed may be credited, and nothing
+  // confirmed may be forgotten.
   const { data: supplements } = await admin
     .from('request_supplements')
-    .select('request_id, status, payment_state, amount');
-  const creditedButUncollected: string[] = [];
-  for (const supplement of supplements ?? []) {
-    if (supplement.status !== 'approved' || supplement.payment_state !== 'uncollected') continue;
-    const hasSupplementEntry = (entries ?? []).some(
-      (e) => e.request_id === supplement.request_id && e.entry_type === 'supplement'
-    );
-    if (hasSupplementEntry) creditedButUncollected.push(supplement.request_id);
+    .select('id, request_id, status, payment_state, amount, stripe_payment_intent_id');
+
+  const creditedTooEarly: string[] = [];
+  const settledButUncredited: string[] = [];
+  const creditedTwice: string[] = [];
+
+  const creditsBySupplement = new Map<string, number>();
+  for (const e of entries ?? []) {
+    if (!e.supplement_id) continue;
+    creditsBySupplement.set(e.supplement_id, (creditsBySupplement.get(e.supplement_id) ?? 0) + 1);
   }
+  for (const [supplementId, count] of creditsBySupplement) {
+    if (count > 1) creditedTwice.push(supplementId);
+  }
+
+  for (const supplement of supplements ?? []) {
+    if (supplement.status !== 'approved') continue;
+    const credits = creditsBySupplement.get(supplement.id) ?? 0;
+    if (supplement.payment_state !== 'settled' && credits > 0) {
+      creditedTooEarly.push(`${supplement.id} (${supplement.payment_state})`);
+    }
+    if (supplement.payment_state === 'settled' && credits === 0) {
+      // Only a job with frozen economics owes anybody anything.
+      const request = pricedById.get(supplement.request_id);
+      if (request) settledButUncredited.push(supplement.id);
+    }
+  }
+
   check(
-    'no uncollected supplement credited a provider',
-    creditedButUncollected.length === 0,
-    creditedButUncollected.join(', ')
+    'no supplement was credited before Stripe confirmed it',
+    creditedTooEarly.length === 0,
+    creditedTooEarly.join(', ')
+  );
+  check(
+    'every settled supplement on a priced job was credited',
+    settledButUncredited.length === 0,
+    settledButUncredited.join(', ')
+  );
+  check('no supplement was credited twice', creditedTwice.length === 0, creditedTwice.join(', '));
+
+  // A supplement collected on its own PaymentIntent must not also have been
+  // added to the fare's hold — that would be two charges for one agreement.
+  const doubleCharged = (supplements ?? []).filter(
+    (s) => s.stripe_payment_intent_id != null && s.payment_state === 'authorized'
+  );
+  check(
+    'no supplement was both charged separately and added to the fare hold',
+    doubleCharged.length === 0,
+    doubleCharged.map((s) => s.id).join(', ')
   );
 }
 

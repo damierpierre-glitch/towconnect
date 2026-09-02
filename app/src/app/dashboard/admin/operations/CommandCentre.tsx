@@ -113,10 +113,10 @@ export function CommandCentre({
             : 'What needs a human right now. Nothing else.'}
         </p>
         {!capabilities.scoped ? (
-          <p className="text-xs text-text-2 mt-2">
+          <p className="text-xs text-yellow mt-2">
             {lang === 'fr'
-              ? "Votre compte n'a pas encore de capacités attribuées, il conserve donc l'accès complet."
-              : 'Your account has no capabilities assigned yet, so it keeps full access.'}
+              ? "Aucune capacité n'est attribuée à votre compte, il n'a donc aucun accès privilégié. Un super administrateur doit vous en accorder une."
+              : 'No capability is assigned to your account, so it holds no privileged access. A super administrator needs to grant you one.'}
           </p>
         ) : null}
       </header>
