@@ -15,6 +15,7 @@ import type {
   ProviderLedgerEntry,
   ProviderPayout,
 } from '@/lib/supabase/types';
+import { errorMessageKey } from '@/lib/errors';
 
 const TYPE_LABEL: Record<LedgerEntryType, { fr: string; en: string }> = {
   earning: { fr: 'Course complétée', en: 'Completed job' },
@@ -58,7 +59,7 @@ export function BusinessFinance({
       const { url } = await startConnectOnboarding(company.id);
       window.location.href = url;
     } catch (e) {
-      showToast('⚠️', e instanceof Error ? e.message : 'Error');
+      showToast('⚠️', t(errorMessageKey(e)));
       setBusy(false);
     }
   }
@@ -118,7 +119,7 @@ export function BusinessFinance({
                     await refreshConnectStatus(company.id);
                     showToast('✅', lang === 'fr' ? 'Statut actualisé.' : 'Status refreshed.');
                   } catch (e) {
-                    showToast('⚠️', e instanceof Error ? e.message : 'Error');
+                    showToast('⚠️', t(errorMessageKey(e)));
                   } finally {
                     setBusy(false);
                   }

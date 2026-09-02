@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Chat } from '@/components/Chat';
 import { ProposeSupplement } from '@/components/ProposeSupplement';
 import { SupplementsPanel } from '@/components/SupplementsPanel';
-import { MapView } from '@/components/MapView';
+import { MapView } from '@/components/LazyMapView';
 import { StatusTracker } from '@/components/StatusTracker';
 import { acceptRequest, advanceRequestStatus, declineRequest, toggleOnline, updateDriverInfo, updateDriverLocation } from '@/lib/actions/driver';
 import { quoteProviderCompensation } from '@/lib/actions/economics';

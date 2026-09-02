@@ -28,9 +28,29 @@ Each term is defined once, here, with where it lives.
 | **Admin capability** | `super_admin`, `operations`, `finance`, `support`. An admin holds only what is granted. | `admin_grants` |
 | **Safety Link** | A revocable, expiring, non-guessable token letting somebody without an account watch one rescue. Only the SHA-256 is stored. | `safety_links` |
 | **Notification** | An event delivered to exactly one person, stored as a type plus a payload — never a finished sentence. | `notifications` |
+| **Readiness item** | One line of the launch checklist. Cannot be marked ready without evidence — a CHECK constraint, not a habit. | `launch_readiness_items` |
+| **Pilot mode** | `off`, `pilot` or `paused`. Decides what happens to a NEW request; never touches a job already running. | `pilot_config` |
+| **Coverage area** | Where the pilot *intends* to operate. A commercial declaration, never evidence that anybody is available, and unable to override a regulated zone. | `pilot_coverage_areas` |
+| **Partner pilot status** | Where a company sits in TowConnect's rollout: `invited`, `onboarding`, `ready`, `active`, `paused`. Commercial only — dispatch never reads it. | `companies.pilot_status` |
+| **Partner link** | A code on a QR sticker or a link, recording where a request came from. Carries no money and changes no price. | `partner_links` |
+| **Product event** | One step of the acquisition funnel. Name is an enum; properties are whitelisted by a trigger. | `product_events` |
+| **Session (analytics)** | A distinct `anon_id`, or a signed-in `profile_id`. What conversion is computed on — never raw event counts. | `product_events` |
 
 ## Values that mean "nobody decided"
 
 `partner_amount`, `commission_amount`, `payment_processing_cost`,
-`cancellation_fee_charged`, any KPI rate, and a driver's rating with zero
-completed jobs. In every case `NULL` is rendered as an absence, not a zero.
+`cancellation_fee_charged`, any KPI rate, a driver's rating with zero completed
+jobs, `pilot_config.min_ready_partners`, `pilot_config.hours_start` /
+`hours_end`, and a funnel conversion whose previous step never happened. In
+every case `NULL` is rendered as an absence, not a zero.
+
+## Three words that all sound like "ready"
+
+The most likely confusion in the whole model, so it is written down rather
+than inferred:
+
+| Field | Question | Read by dispatch? |
+| --- | --- | --- |
+| `companies.status` | Approved to operate at all — compliance | Yes |
+| `companies.pilot_status` | Where they sit in our rollout — commercial | **No** |
+| `driver_profiles.is_online` | Is a truck available right now | Yes |

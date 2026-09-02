@@ -103,7 +103,7 @@ export function NavBar({ role, hasCompany = false }: NavBarProps) {
               href={tab.href}
               className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium ${
                 pathname.startsWith(tab.href) && !subLinks.some((s) => pathname.startsWith(s.href))
-                  ? 'bg-orange text-white'
+                  ? 'bg-orange-dark text-white'
                   : 'text-muted'
               }`}
             >
@@ -115,7 +115,7 @@ export function NavBar({ role, hasCompany = false }: NavBarProps) {
               key={l.href}
               href={l.href}
               className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium ${
-                pathname.startsWith(l.href) ? 'bg-orange text-white' : 'text-muted'
+                pathname.startsWith(l.href) ? 'bg-orange-dark text-white' : 'text-muted'
               }`}
             >
               {l.icon} {lang === 'fr' ? l.fr : l.en}
@@ -168,7 +168,7 @@ export function NavBar({ role, hasCompany = false }: NavBarProps) {
               </Link>
               <Link
                 href="/signup"
-                className="px-2.5 min-[360px]:px-3 sm:px-4 py-2 rounded-lg bg-orange text-white text-sm font-semibold whitespace-nowrap hover:bg-orange-dark transition-colors"
+                className="px-2.5 min-[360px]:px-3 sm:px-4 py-2 rounded-lg bg-orange-dark text-white text-sm font-semibold whitespace-nowrap hover:bg-orange-deep transition-colors"
               >
                 {t('nav_signup')}
               </Link>
@@ -185,7 +185,7 @@ export function NavBar({ role, hasCompany = false }: NavBarProps) {
               onClick={() => setMenuOpen(false)}
               className={`flex items-center gap-2 px-3 py-3 rounded-lg text-sm font-medium ${
                 pathname.startsWith(tab.href) && !subLinks.some((s) => pathname.startsWith(s.href))
-                  ? 'bg-orange text-white'
+                  ? 'bg-orange-dark text-white'
                   : 'text-text-2'
               }`}
             >
@@ -198,7 +198,7 @@ export function NavBar({ role, hasCompany = false }: NavBarProps) {
               href={l.href}
               onClick={() => setMenuOpen(false)}
               className={`flex items-center gap-2 px-3 py-3 rounded-lg text-sm font-medium ${
-                pathname.startsWith(l.href) ? 'bg-orange text-white' : 'text-text-2'
+                pathname.startsWith(l.href) ? 'bg-orange-dark text-white' : 'text-text-2'
               }`}
             >
               {l.icon} {lang === 'fr' ? l.fr : l.en}

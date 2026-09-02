@@ -1,15 +1,16 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { track } from '@/lib/analytics';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
 import { cancelRequest } from '@/lib/actions/requests';
 import { distanceKm, estimateEtaMinutes, toMoney } from '@/lib/pricing';
 import { CLIENT_QUICK_MESSAGES } from '@/lib/constants';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { MapView } from '@/components/MapView';
+import { MapView } from '@/components/LazyMapView';
 import { StatusTracker } from '@/components/StatusTracker';
 import { Chat } from '@/components/Chat';
 import { RegulatedZoneNotice, RestrictedCapacityNotice, useRegulatedZone } from '@/components/RegulatedZoneNotice';
@@ -62,6 +63,11 @@ export function StepTracking({
   const [regulatedState, setRegulatedState] = useState<RegulatedDispatchState>('not_applicable');
   const [driver, setDriver] = useState<DriverInfo | null>(null);
   const [takingLonger, setTakingLonger] = useState(false);
+  // The funnel steps after the request exists are recorded from the status
+  // the customer actually sees change, and each is recorded once: a realtime
+  // channel can redeliver an UPDATE, and a conversion rate built on
+  // duplicates is a conversion rate that lies upward.
+  const reportedRef = useRef<Set<RequestStatus>>(new Set());
 
   useEffect(() => {
     const supabase = createClient();
@@ -77,6 +83,9 @@ export function StepTracking({
         setPrice(toMoney(data.price_estimate));
         setDriverId(data.driver_id);
         setRegulatedState(data.regulated_dispatch_state);
+        // A resumed job is not a new milestone. Seed the set from what has
+        // already happened so reopening a tab does not re-count an arrival.
+        reportedRef.current.add(data.status);
       }
     }
     loadInitial();
@@ -97,6 +106,14 @@ export function StepTracking({
           setPrice(toMoney(row.price_estimate));
           setDriverId(row.driver_id);
           setRegulatedState(row.regulated_dispatch_state ?? 'not_applicable');
+
+          if (!reportedRef.current.has(row.status)) {
+            reportedRef.current.add(row.status);
+            if (row.status === 'matched') track('request_matched', undefined, requestId);
+            if (row.status === 'arrived') track('driver_arrived', undefined, requestId);
+            if (row.status === 'completed') track('request_completed', undefined, requestId);
+            if (row.status === 'cancelled') track('request_cancelled', undefined, requestId);
+          }
         }
       )
       .subscribe();

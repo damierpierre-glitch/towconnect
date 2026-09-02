@@ -7,6 +7,7 @@ import { distanceKm, estimatePriceBreakdown } from '@/lib/pricing';
 import { problemRequiresDestination } from '@/lib/constants';
 import { authorizeRequestPayment, cancelRequestPayment, finalizeAuthorization, isStripeConfigured } from '@/lib/actions/payments';
 import { settleCancellationEconomics } from '@/lib/actions/finance';
+import { errorCode } from '@/lib/errors';
 
 export interface CreateRequestInput {
   problemType: string;
@@ -19,6 +20,12 @@ export interface CreateRequestInput {
   destinationAddress?: string | null;
   destinationLat?: number | null;
   destinationLng?: number | null;
+  /**
+   * Which partner channel sent this person, when one did. Recorded once and
+   * immutable afterwards (0047). It measures where work came from and does
+   * nothing else — no rate, no discount and no payout is attached to it.
+   */
+  attributionCode?: string | null;
 }
 
 export interface CreateRequestResult {
@@ -26,6 +33,24 @@ export interface CreateRequestResult {
   paymentStatus: PaymentStatus | 'skipped';
   paymentClientSecret: string | null;
   paymentMethodId: string | null;
+}
+
+/**
+ * An expected refusal, returned rather than thrown.
+ *
+ * A thrown error crossing the server-action boundary is redacted in
+ * production — which is right for a bug and wrong for "we do not serve that
+ * address". Those are not failures, they are answers, so they come back as
+ * data carrying a reason the interface can translate.
+ *
+ * Only a type is exported alongside it: everything exported from a
+ * `'use server'` module has to be an async function, so the type guard lives
+ * at the call site as a plain `'refused' in result` check.
+ */
+export interface CreateRequestRefusal {
+  refused: true;
+  reason: string;
+  detail: string | null;
 }
 
 // Same escalating tiers Smart Dispatch itself uses (dispatch_next_candidate)
@@ -45,12 +70,28 @@ const PRICE_SEARCH_TIERS = [15, 40, 350];
 // (status='pending'), payment is authorized if a service type/amount
 // requires it, and only then is dispatch_next_candidate() called — so a
 // request with a payment problem never gets a driver sent to it.
-export async function createRequest(input: CreateRequestInput): Promise<CreateRequestResult> {
+export async function createRequest(
+  input: CreateRequestInput
+): Promise<CreateRequestResult | CreateRequestRefusal> {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
+
+  // The pilot gate, asked before anything is computed or charged. The
+  // trigger on `requests` refuses regardless (0047) — this exists so the
+  // refusal arrives as a reason rather than as a constraint violation, and
+  // so no card is authorized for a job we were never going to take.
+  const { data: gate } = await supabase.rpc('pilot_gate' as never, {
+    p_profile_id: user.id,
+    p_lat: input.lat,
+    p_lng: input.lng,
+  } as never);
+  const gateAnswer = (gate as { allowed: boolean; reason: string; detail: string | null }[] | null)?.[0];
+  if (gateAnswer && !gateAnswer.allowed) {
+    return { refused: true, reason: gateAnswer.reason, detail: gateAnswer.detail };
+  }
 
   let driverDistanceKm = 0;
   for (const radiusKm of PRICE_SEARCH_TIERS) {
@@ -99,11 +140,22 @@ export async function createRequest(input: CreateRequestInput): Promise<CreateRe
       destination_lat: needsDestination ? input.destinationLat ?? null : null,
       destination_lng: needsDestination ? input.destinationLng ?? null : null,
       tow_distance_km: towDistanceKm ?? null,
+      attribution_code: input.attributionCode ?? null,
     })
     .select('id')
     .single();
 
-  if (error) throw error;
+  // The trigger is the backstop. If the gate closed between the check above
+  // and this insert — an operator pausing the pilot mid-flow is exactly that
+  // case — the refusal still comes back as a reason rather than as a raw
+  // database error the customer would have to interpret.
+  if (error) {
+    const code = errorCode(error);
+    if (code.startsWith('pilot_')) {
+      return { refused: true, reason: code.slice('pilot_'.length), detail: null };
+    }
+    throw error;
+  }
   const requestId = data.id as string;
 
   if (!isStripeConfigured()) {

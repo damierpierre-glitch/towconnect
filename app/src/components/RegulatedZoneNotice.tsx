@@ -83,7 +83,7 @@ export function RegulatedZoneNotice({
       {zone.authority_phone ? (
         <a
           href={`tel:${zone.authority_phone}`}
-          className="cta-glow inline-flex items-center justify-center w-full sm:w-auto px-6 py-3.5 rounded-xl bg-orange text-white font-semibold text-[17px] hover:bg-orange-dark transition-colors mb-4"
+          className="cta-glow inline-flex items-center justify-center w-full sm:w-auto px-6 py-3.5 rounded-xl bg-orange-dark text-white font-semibold text-[17px] hover:bg-orange-deep transition-colors mb-4"
         >
           {t('zone_call_cta')} {zone.authority_phone}
         </a>

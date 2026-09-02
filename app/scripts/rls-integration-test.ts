@@ -1448,6 +1448,13 @@ async function run(): Promise<Result[]> {
       const adminUser = await createTestUser('user');
       createdUserIds.push(adminUser.id);
       await admin.from('profiles').update({ role: 'admin' }).eq('id', adminUser.id);
+      // 0048: driver documents are identity documents, scoped to the
+      // `operations` capability. Being an administrator is no longer enough —
+      // which is the whole point of the change, and the reason this fixture
+      // now has to say which administrator it is.
+      await admin
+        .from('admin_grants')
+        .insert({ profile_id: adminUser.id, capability: 'operations' } as never);
 
       const documentIds: string[] = [];
 
@@ -1506,9 +1513,49 @@ async function run(): Promise<Result[]> {
           .select('status')
           .single();
         results.push({
-          name: 'an admin (real admin-role session) can review a driver document',
+          name: 'an operations admin can review a driver document',
           pass: !adminReviewError && adminReview?.status === 'approved',
           detail: adminReviewError?.message ?? `status is '${adminReview?.status}', expected 'approved'`,
+        });
+
+        // THE PHASE 10 FINDING, AS A PERMANENT TEST.
+        // Until 0048 these policies were keyed on is_admin(), so an
+        // administrator granted only `finance` — somebody whose job is
+        // refunds and payouts — could read every driver's licence and
+        // insurance certificate. Nobody had exercised it. It is asserted here
+        // so it cannot come back quietly.
+        const financeAdmin = await createTestUser('user');
+        createdUserIds.push(financeAdmin.id);
+        await admin.from('profiles').update({ role: 'admin' }).eq('id', financeAdmin.id);
+        await admin
+          .from('admin_grants')
+          .insert({ profile_id: financeAdmin.id, capability: 'finance' } as never);
+
+        const { data: financeSeesDocuments } = await financeAdmin.client
+          .from('driver_documents')
+          .select('id');
+        results.push({
+          name: 'a finance-only admin cannot read driver identity documents',
+          pass: (financeSeesDocuments ?? []).length === 0,
+          detail:
+            (financeSeesDocuments ?? []).length > 0
+              ? `finance read ${(financeSeesDocuments ?? []).length} document row(s)`
+              : undefined,
+        });
+
+        const { error: financeReview } = await financeAdmin.client
+          .from('driver_documents')
+          .update({ status: 'rejected' })
+          .eq('id', insertedDoc.id);
+        const { data: afterFinance } = await admin
+          .from('driver_documents')
+          .select('status')
+          .eq('id', insertedDoc.id)
+          .single();
+        results.push({
+          name: 'and cannot review one either',
+          pass: afterFinance?.status === 'approved',
+          detail: financeReview?.message ?? `status is now '${afterFinance?.status}'`,
         });
 
         // Same shape again: DELETE under a USING clause that doesn't match

@@ -59,3 +59,17 @@ An extra proposed by the driver and approved by the customer.
 
 `pricing_configured()` returns `false`. Everything above works and computes
 nothing, because that decision has not been made.
+
+---
+
+## Before live mode
+
+Stripe stays in test mode through the pilot, and the application refuses a live
+secret key at startup. The eleven-item checklist that would have to be
+satisfied first — and the three items on it that are not engineering work — is
+`04-finance/stripe-live-readiness.md`. The decision itself is ADR-0011.
+
+Two facts that make the rest academic today: `pricing_configured()` returns
+`false`, so no job can be priced in production at all; and no Stripe transfer
+has ever executed, so *internal payout prepared* has never yet become *Stripe
+transfer executed*.

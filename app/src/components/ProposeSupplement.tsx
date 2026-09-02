@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Input, Label } from '@/components/ui/Field';
 import { listSupplementTypes, proposeSupplement } from '@/lib/actions/supplements';
 import type { ServiceSupplementType } from '@/lib/supabase/types';
+import { errorMessageKey } from '@/lib/errors';
 
 // The driver's side of a supplement: propose, and wait. There is no approve
 // control here because there is nothing for a driver to approve — the
@@ -44,7 +45,7 @@ export function ProposeSupplement({ requestId }: { requestId: string }) {
       setOpen(false);
       showToast('✅', t('supp_awaiting_client'));
     } catch (e) {
-      showToast('⚠️', e instanceof Error ? e.message : t('error_generic'));
+      showToast('⚠️', t(errorMessageKey(e)));
     } finally {
       setSaving(false);
     }

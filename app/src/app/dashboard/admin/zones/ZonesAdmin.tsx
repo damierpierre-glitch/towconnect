@@ -16,6 +16,7 @@ import {
   type ZoneAuditEntry,
   type ZoneWithProviders,
 } from '@/lib/actions/zones';
+import { errorMessageKey } from '@/lib/errors';
 
 interface CompanyOption {
   id: string;
@@ -44,7 +45,7 @@ export function ZonesAdmin({
     try {
       await fn();
     } catch (e) {
-      showToast('⚠️', e instanceof Error ? e.message : t('error_generic'));
+      showToast('⚠️', t(errorMessageKey(e)));
     } finally {
       setBusy(false);
     }

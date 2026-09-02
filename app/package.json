@@ -22,7 +22,10 @@
     "test:finance": "tsx --tsconfig tsconfig.e2e.json scripts/finance-e2e.ts",
     "test:operations": "tsx --tsconfig tsconfig.e2e.json scripts/operations-e2e.ts",
     "test:exports": "tsx --tsconfig tsconfig.e2e.json scripts/exports-e2e.ts",
-    "test:safety": "tsx --tsconfig tsconfig.e2e.json scripts/safety-e2e.ts"
+    "test:safety": "tsx --tsconfig tsconfig.e2e.json scripts/safety-e2e.ts",
+    "verify:phase10": "tsx scripts/verify-phase10.ts",
+    "test:pilot": "tsx --tsconfig tsconfig.e2e.json scripts/pilot-e2e.ts",
+    "measure:bundles": "tsx scripts/measure-bundles.ts"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.8.2",

@@ -10,6 +10,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input, Label } from '@/components/ui/Field';
 import { BrandMark } from '@/components/BrandMark';
+import { track } from '@/lib/analytics';
 
 export default function LoginPage() {
   const { t } = useLanguage();
@@ -24,6 +25,7 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    track('login_started');
 
     const { data, error: signInError } = await supabase.auth.signInWithPassword({
       email,
@@ -31,10 +33,16 @@ export default function LoginPage() {
     });
 
     if (signInError || !data.user) {
-      setError(t('error_generic'));
+      // "Something went wrong" for a mistyped password is the single most
+      // common unhelpful message in software. It is also not more secure:
+      // this says which two things to check, and still refuses to say which
+      // of them was wrong.
+      setError(t('err_bad_credentials'));
       setLoading(false);
       return;
     }
+
+    track('auth_completed', { source: 'password' });
 
     const { data: profile } = await supabase
       .from('profiles')
@@ -47,6 +55,7 @@ export default function LoginPage() {
   }
 
   async function handleGoogle() {
+    track('login_started', { source: 'google' });
     await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: `${window.location.origin}/auth/callback` },
@@ -63,8 +72,10 @@ export default function LoginPage() {
           <h1 className="font-display text-2xl font-bold mb-6">{t('login_title')}</h1>
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div>
-              <Label>{t('login_email')}</Label>
+              <Label htmlFor="login-email">{t('login_email')}</Label>
               <Input
+                id="login-email"
+                autoComplete="email"
                 type="email"
                 required
                 value={email}
@@ -72,15 +83,21 @@ export default function LoginPage() {
               />
             </div>
             <div>
-              <Label>{t('login_password')}</Label>
+              <Label htmlFor="login-password">{t('login_password')}</Label>
               <Input
+                id="login-password"
+                autoComplete="current-password"
                 type="password"
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
-            {error ? <p className="text-sm text-red">{error}</p> : null}
+            {error ? (
+              <p role="alert" className="text-sm text-red">
+                {error}
+              </p>
+            ) : null}
             <Button type="submit" full disabled={loading}>
               {t('login_submit')}
             </Button>

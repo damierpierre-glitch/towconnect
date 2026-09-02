@@ -5,6 +5,8 @@ import { useLanguage } from '@/lib/i18n/LanguageProvider';
 import { useToast } from '@/components/ToastProvider';
 import { cancelRequest, createRequest } from '@/lib/actions/requests';
 import { retryRequestPayment } from '@/lib/actions/payments';
+import { attributionCode, track } from '@/lib/analytics';
+import { ERROR_MESSAGE_KEYS } from '@/lib/errors';
 import type { PaymentStatus, TowRequest, Vehicle } from '@/lib/supabase/types';
 import { StepForm } from './StepForm';
 import { StepEstimate } from './StepEstimate';
@@ -82,9 +84,31 @@ export function RequestFlow({
         destinationAddress: form.destinationAddress,
         destinationLat: form.destinationLat,
         destinationLng: form.destinationLng,
+        attributionCode: attributionCode(),
       });
 
+      // A refusal is an answer, not a failure: it comes back as data and is
+      // said in words, and the person is left on the estimate screen where
+      // they can change the address rather than dropped back to the start.
+      if ('refused' in result) {
+        const key =
+          result.reason === 'paused'
+            ? ERROR_MESSAGE_KEYS.pilot_paused
+            : result.reason === 'outside_territory'
+              ? ERROR_MESSAGE_KEYS.pilot_outside_territory
+              : result.reason === 'outside_hours'
+                ? ERROR_MESSAGE_KEYS.pilot_outside_hours
+                : ERROR_MESSAGE_KEYS.pilot_not_on_allowlist;
+        showToast('🚧', t(key));
+        return;
+      }
+
+      track('request_created', { problem_type: form.problemType }, result.requestId);
+
       if (result.paymentStatus === 'authorized' || result.paymentStatus === 'skipped') {
+        if (result.paymentStatus === 'authorized') {
+          track('payment_authorized', undefined, result.requestId);
+        }
         enterTracking(result.requestId, form.lat, form.lng);
         return;
       }
@@ -157,7 +181,15 @@ export function RequestFlow({
   return (
     <div className="max-w-3xl mx-auto px-6 py-8">
       <StepIndicator currentIndex={currentIndex} />
-      {step === 'form' ? <StepForm vehicles={vehicles} onSubmit={handleFormSubmit} /> : null}
+      {/* `initial` is what makes Back non-destructive. StepForm unmounts when
+          the estimate appears, so without it every field is blank on the way
+          back — and somebody who tapped Back only to correct one character of
+          an address has to re-choose the problem, re-type the location and
+          re-pick the destination, at the roadside, one-handed. Found in the
+          Phase 10 mobile walkthrough. */}
+      {step === 'form' ? (
+        <StepForm vehicles={vehicles} initial={form} onSubmit={handleFormSubmit} />
+      ) : null}
       {step === 'estimate' && form ? (
         <StepEstimate form={form} onBack={() => setStep('form')} onConfirm={handleConfirm} />
       ) : null}

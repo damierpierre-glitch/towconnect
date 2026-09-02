@@ -93,8 +93,19 @@ export default async function RootLayout({ children }: LayoutProps<'/'>) {
       <body className="min-h-full flex flex-col bg-night text-text">
         <LanguageProvider>
           <ToastProvider>
+            {/* A keyboard user currently tabs through the whole navigation
+                before reaching the request form. One link, visible only when
+                focused, skips it. */}
+            <a
+              href="#main"
+              className="sr-only focus:not-sr-only focus:absolute focus:z-[400] focus:top-3 focus:left-3 focus:px-4 focus:py-2.5 focus:rounded-xl focus:bg-orange-dark focus:text-white focus:font-semibold"
+            >
+              Aller au contenu / Skip to content
+            </a>
             <NavBar role={role} hasCompany={hasCompany} />
-            <main className="flex-1">{children}</main>
+            <main id="main" className="flex-1">
+              {children}
+            </main>
             {/* Marketing chrome, so it stops at the signed-in surfaces: a
                 driver mid-mission does not need a footer under the map. */}
             {role === null ? <SiteFooter /> : null}

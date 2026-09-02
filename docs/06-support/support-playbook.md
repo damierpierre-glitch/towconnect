@@ -47,3 +47,24 @@ request id, the amount and the reason.
 
 It remains available for a real emergency and for regulated-zone procedures. It
 is not the normal path, and nothing in the product should make it one.
+
+---
+
+## During the pilot
+
+`06-support/pilot-support-runbook.md` covers the eight situations a Montréal &
+Rive-Sud pilot will actually produce, with an escalation table saying for each
+one: who looks, what they may read, what they may do, and when it stops being
+theirs.
+
+Two additions to everything above:
+
+**Every intervention gets an incident.** Not for process theatre —
+`requests_needing_human` in `ops_kpis()` is built from incidents, and an
+unrecorded intervention makes the platform look more autonomous than it is.
+During a pilot that number matters more than the job count.
+
+**"We are not accepting requests right now."** If the pilot is paused, a
+customer sees the reason an operator wrote. Repeat it as written; do not
+improvise a restart time. If they are in danger, 911 comes first and TowConnect
+second.

@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { toMoney } from '@/lib/pricing';
 import { respondToSupplement, withdrawSupplement } from '@/lib/actions/supplements';
 import type { RequestSupplement, ServiceSupplementType } from '@/lib/supabase/types';
+import { errorMessageKey } from '@/lib/errors';
 
 // Both sides of a supplement, from the same component.
 //
@@ -77,7 +78,7 @@ export function SupplementsPanel({
       await respondToSupplement(id, approve);
       await load();
     } catch (e) {
-      showToast('⚠️', e instanceof Error ? e.message : t('error_generic'));
+      showToast('⚠️', t(errorMessageKey(e)));
     } finally {
       setBusyId(null);
     }
@@ -89,7 +90,7 @@ export function SupplementsPanel({
       await withdrawSupplement(id);
       await load();
     } catch (e) {
-      showToast('⚠️', e instanceof Error ? e.message : t('error_generic'));
+      showToast('⚠️', t(errorMessageKey(e)));
     } finally {
       setBusyId(null);
     }

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { MapView, type MapMarker } from '@/components/MapView';
+import { MapView, type MapMarker } from '@/components/LazyMapView';
 import { problemLabel } from '@/lib/constants';
 import { distanceKm, estimateEtaMinutes } from '@/lib/pricing';
 import type { SafetyLinkView } from '@/lib/supabase/types';

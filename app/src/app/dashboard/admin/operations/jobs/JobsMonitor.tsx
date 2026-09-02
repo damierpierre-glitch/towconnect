@@ -95,7 +95,7 @@ export function JobsMonitor({ capabilities, jobs }: { capabilities: Capabilities
             onClick={() => setParam('status', option.key)}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
               (statusFilter ?? null) === option.key
-                ? 'bg-orange text-white'
+                ? 'bg-orange-dark text-white'
                 : 'bg-night-3 text-text-2 border border-steel'
             }`}
           >
@@ -105,7 +105,7 @@ export function JobsMonitor({ capabilities, jobs }: { capabilities: Capabilities
         <button
           onClick={() => setParam('regulated', regulatedOnly ? null : '1')}
           className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
-            regulatedOnly ? 'bg-orange text-white' : 'bg-night-3 text-text-2 border border-steel'
+            regulatedOnly ? 'bg-orange-dark text-white' : 'bg-night-3 text-text-2 border border-steel'
           }`}
         >
           {lang === 'fr' ? 'Zone réglementée' : 'Regulated zone'}

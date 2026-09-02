@@ -22,6 +22,7 @@ import {
   type AuditEntry,
 } from '@/lib/actions/economics';
 import type { PricingConfig } from '@/lib/supabase/types';
+import { errorMessageKey } from '@/lib/errors';
 
 // The screen where TowConnect's economics are decided.
 //
@@ -97,7 +98,7 @@ const WARNING_TEXT: Record<EconomicWarning, { fr: string; en: string }> = {
 };
 
 export function EconomicsAdmin({ configs, audit }: { configs: PricingConfig[]; audit: AuditEntry[] }) {
-  const { lang } = useLanguage();
+  const { lang, t } = useLanguage();
   const { showToast } = useToast();
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -136,7 +137,7 @@ export function EconomicsAdmin({ configs, audit }: { configs: PricingConfig[]; a
       await fn();
       showToast('✅', done);
     } catch (e) {
-      showToast('⚠️', e instanceof Error ? e.message : 'Error');
+      showToast('⚠️', t(errorMessageKey(e)));
     } finally {
       setBusy(false);
     }

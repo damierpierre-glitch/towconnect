@@ -192,7 +192,7 @@ export function CommandCentre({
             <button
               onClick={() => setFilter(null)}
               className={`px-2.5 py-1 rounded-lg text-xs font-medium ${
-                filter === null ? 'bg-orange text-white' : 'bg-night-3 text-text-2 border border-steel'
+                filter === null ? 'bg-orange-dark text-white' : 'bg-night-3 text-text-2 border border-steel'
               }`}
             >
               {lang === 'fr' ? 'Tout' : 'All'}
@@ -202,7 +202,7 @@ export function CommandCentre({
                 key={k}
                 onClick={() => setFilter(k)}
                 className={`px-2.5 py-1 rounded-lg text-xs font-medium ${
-                  filter === k ? 'bg-orange text-white' : 'bg-night-3 text-text-2 border border-steel'
+                  filter === k ? 'bg-orange-dark text-white' : 'bg-night-3 text-text-2 border border-steel'
                 }`}
               >
                 {KIND_LABEL[k]?.[lang === 'fr' ? 'fr' : 'en'] ?? k}

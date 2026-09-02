@@ -31,6 +31,7 @@ import type {
   TowRequest,
   VehicleType,
 } from '@/lib/supabase/types';
+import { errorMessageKey } from '@/lib/errors';
 
 const CAPABILITIES: ServiceCapability[] = [
   'flatbed',
@@ -121,7 +122,7 @@ export function BusinessDashboard({
     try {
       await fn();
     } catch (e) {
-      showToast('⚠️', e instanceof Error ? e.message : t('error_generic'));
+      showToast('⚠️', t(errorMessageKey(e)));
     } finally {
       setBusy(false);
     }
@@ -165,7 +166,7 @@ export function BusinessDashboard({
             key={x.key}
             onClick={() => setTab(x.key)}
             className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
-              tab === x.key ? 'bg-orange text-white' : 'bg-night-2 text-text-2 border border-night-4'
+              tab === x.key ? 'bg-orange-dark text-white' : 'bg-night-2 text-text-2 border border-night-4'
             }`}
           >
             {x.label}

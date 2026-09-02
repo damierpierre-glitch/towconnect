@@ -31,3 +31,25 @@ back-filled or estimated.
 
 **A rate over an empty denominator is `NULL`, never `0`.** "Nothing happened"
 and "everything failed" are different facts, and a `0 %` reads as the second.
+
+## The funnel is a different measurement, and says so
+
+`funnel_summary()` (Phase 10) measures how many people reach each step of
+acquisition. It is **not** a second definition of anything above:
+
+- It counts **browser events**, which can be missed — a closed tab, a blocked
+  script. `ops_kpis()` counts database facts, which cannot.
+- Its conversion is computed on distinct **sessions**, not events, so a page
+  that mounts twice is one session.
+- A `NULL` conversion means the previous step never happened, not 0 %.
+
+**When a number matters, take it from `ops_kpis()`.** The funnel answers where
+people stopped; the KPIs answer what the platform did. The full event list is
+`05-data/analytics-events.md`.
+
+## Phone-call-required rate
+
+`requests_needing_human ÷ requests created`, both from `ops_kpis()`. It is the
+number a pilot is actually for: it says how much of the platform is still a
+person. It only means anything if every intervention is recorded as an
+incident, which is why `06-support/pilot-support-runbook.md` insists on it.

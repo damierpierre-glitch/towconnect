@@ -105,6 +105,13 @@ export type Company = {
   connect_requirements_due: string[];
   connect_disabled_reason: string | null;
   connect_updated_at: string | null;
+  // Phase 10. Where this company sits in OUR rollout — a commercial fact,
+  // deliberately not the same thing as `status` (allowed to operate at all)
+  // or driver_profiles.is_online (a truck is available right now). Only
+  // operations may write it; a trigger (0047) refuses the company itself.
+  pilot_status: PartnerPilotStatus;
+  pilot_status_note: string | null;
+  pilot_status_updated_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -838,6 +845,10 @@ export type TowRequest = {
   cancellation_fee_charged: number | string | null;
   cancellation_compensation: number | string | null;
   cancellation_settled_at: string | null;
+  // Phase 10: which partner channel produced this request, when one did. Set
+  // at creation and immutable afterwards (0047) — attribution that can be
+  // edited later is not attribution, it is a story about where work came from.
+  attribution_code: string | null;
   // Phase 6: the regulated zone covering the pickup point, stamped by a
   // BEFORE INSERT trigger (0023) so it can never be client-supplied. Null
   // when no active zone covers the point.
@@ -911,6 +922,162 @@ export type Payment = {
   failure_reason: string | null;
   created_at: string;
   updated_at: string;
+};
+
+// ---------------------------------------------------------------- Phase 10
+
+export type ReadinessDomain =
+  | 'product' | 'customer' | 'driver' | 'business' | 'operations' | 'finance'
+  | 'regulatory' | 'security' | 'privacy' | 'monitoring' | 'support' | 'data'
+  | 'legal' | 'commercial';
+
+export type ReadinessStatus =
+  | 'not_started' | 'in_progress' | 'ready' | 'blocked' | 'not_applicable';
+
+// `evidence` is not optional in practice: a CHECK constraint (0047) refuses a
+// row marked `ready` without it.
+export type ReadinessItem = {
+  id: string;
+  domain: ReadinessDomain;
+  key: string;
+  title: string;
+  status: ReadinessStatus;
+  owner: string;
+  evidence: string | null;
+  blocker: boolean;
+  last_reviewed_at: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PilotMode = 'off' | 'pilot' | 'paused';
+
+export type PilotConfig = {
+  id: boolean;
+  mode: PilotMode;
+  territory_label: string;
+  // null means "no hours restriction stated" — never "closed".
+  hours_start: string | null;
+  hours_end: string | null;
+  timezone: string;
+  allowlist_enabled: boolean;
+  // null means nobody has decided. Rendered as such, never as 0.
+  min_ready_partners: number | null;
+  paused_reason: string | null;
+  updated_at: string;
+  updated_by: string | null;
+};
+
+export type PilotCoverageState = 'served' | 'not_served';
+
+export type PilotCoverageArea = {
+  id: string;
+  name: string;
+  state: PilotCoverageState;
+  kind: 'radius' | 'polygon';
+  center_lat: number | null;
+  center_lng: number | null;
+  radius_km: number | null;
+  note: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PartnerPilotStatus =
+  | 'none' | 'invited' | 'onboarding' | 'ready' | 'active' | 'paused';
+
+export type PartnerLink = {
+  code: string;
+  label: string;
+  company_id: string | null;
+  kind: 'qr' | 'link' | 'manual';
+  active: boolean;
+  note: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+export type ProductEventName =
+  | 'landing_viewed' | 'signup_started' | 'login_started' | 'auth_completed'
+  | 'location_obtained' | 'location_denied' | 'vehicle_selected'
+  | 'situation_selected' | 'estimate_shown' | 'checkout_started'
+  | 'payment_authorized' | 'request_created' | 'request_matched'
+  | 'driver_arrived' | 'request_completed' | 'request_cancelled';
+
+/** Whitelisted by a trigger (0047). Anything else is refused by the database. */
+export type ProductEventProps = Partial<
+  Record<
+    | 'problem_type' | 'vehicle_type' | 'has_destination' | 'step' | 'reason'
+    | 'duration_ms' | 'source' | 'platform' | 'viewport' | 'locale'
+    | 'error_code' | 'coverage' | 'regulated_state',
+    string | number | boolean
+  >
+>;
+
+export type FunnelStep = {
+  step: number;
+  name: string;
+  events: number;
+  sessions: number;
+  // NULL when the previous step never happened — "nobody got here" and
+  // "everybody dropped" are different facts.
+  conversion_from_previous: number | string | null;
+};
+
+export type SystemHealthComponent = {
+  component: string;
+  /** ok | attention | unknown — unknown is never rendered as green. */
+  state: string;
+  detail: string;
+  measured_at: string;
+};
+
+export type OpsAlert = {
+  key: string;
+  severity: string;
+  title: string;
+  detail: string;
+  action: string;
+};
+
+export type GoNoGoCriterion = {
+  criterion: string;
+  /** pass | fail | undecided */
+  state: string;
+  detail: string;
+};
+
+export type PartnerReadiness = {
+  company_id: string;
+  company_name: string;
+  status: CompanyStatus;
+  pilot_status: PartnerPilotStatus;
+  drivers_total: number;
+  drivers_dispatchable: number;
+  drivers_online: number;
+  fleet_vehicles: number;
+  service_areas: number;
+  connect_charges_enabled: boolean;
+  connect_payouts_enabled: boolean;
+  blocking_reasons: string[];
+};
+
+export type CoverageReportRow = {
+  area_name: string;
+  state: PilotCoverageState;
+  note: string;
+  partners_ready: number;
+  partners_active: number;
+  drivers_dispatchable: number;
+};
+
+export type PilotGateAnswer = {
+  allowed: boolean;
+  /** open | paused | outside_hours | outside_territory | not_on_allowlist */
+  reason: string;
+  detail: string | null;
 };
 
 export interface Database {
@@ -1387,6 +1554,65 @@ export interface Database {
         Update: Record<string, unknown>;
         Relationships: [];
       };
+      launch_readiness_items: {
+        Row: ReadinessItem;
+        Insert: Partial<ReadinessItem> & {
+          domain: ReadinessDomain;
+          key: string;
+          title: string;
+          owner: string;
+        };
+        Update: Partial<ReadinessItem>;
+        Relationships: [];
+      };
+      pilot_config: {
+        Row: PilotConfig;
+        // One row, created by the migration. Nobody inserts another: the
+        // primary key can only be `true`.
+        Insert: never;
+        Update: Partial<PilotConfig>;
+        Relationships: [];
+      };
+      pilot_coverage_areas: {
+        Row: PilotCoverageArea;
+        Insert: Partial<PilotCoverageArea> & {
+          name: string;
+          state: PilotCoverageState;
+          kind: 'radius' | 'polygon';
+          note: string;
+        };
+        Update: Partial<PilotCoverageArea>;
+        Relationships: [];
+      };
+      pilot_allowlist: {
+        Row: { profile_id: string; note: string | null; added_by: string | null; added_at: string };
+        Insert: { profile_id: string; note?: string | null; added_by?: string | null };
+        Update: { note?: string | null };
+        Relationships: [];
+      };
+      partner_links: {
+        Row: PartnerLink;
+        Insert: Partial<PartnerLink> & { code: string; label: string; kind: 'qr' | 'link' | 'manual' };
+        Update: Partial<PartnerLink>;
+        Relationships: [];
+      };
+      product_events: {
+        Row: {
+          id: string;
+          name: ProductEventName;
+          profile_id: string | null;
+          anon_id: string | null;
+          request_id: string | null;
+          attribution_code: string | null;
+          props: ProductEventProps;
+          created_at: string;
+        };
+        // record_product_event() is the only way in — there is no INSERT
+        // policy, so the whitelist trigger cannot be walked around.
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       companies: {
         Row: Company;
         // No insert/update/delete policy for authenticated at all — prep
@@ -1571,6 +1797,48 @@ export interface Database {
       ops_threshold: {
         Args: { p_key: string };
         Returns: string;
+      };
+      pilot_point_coverage: {
+        Args: { p_lat: number; p_lng: number };
+        Returns: 'served' | 'not_served' | 'undeclared';
+      };
+      pilot_gate: {
+        Args: { p_profile_id: string | null; p_lat: number | null; p_lng: number | null };
+        Returns: PilotGateAnswer[];
+      };
+      pilot_partner_readiness: {
+        Args: Record<string, never>;
+        Returns: PartnerReadiness[];
+      };
+      pilot_coverage_report: {
+        Args: Record<string, never>;
+        Returns: CoverageReportRow[];
+      };
+      pilot_go_no_go: {
+        Args: Record<string, never>;
+        Returns: GoNoGoCriterion[];
+      };
+      ops_system_health: {
+        Args: Record<string, never>;
+        Returns: SystemHealthComponent[];
+      };
+      ops_alerts: {
+        Args: Record<string, never>;
+        Returns: OpsAlert[];
+      };
+      funnel_summary: {
+        Args: { p_from: string; p_to: string };
+        Returns: FunnelStep[];
+      };
+      record_product_event: {
+        Args: {
+          p_name: ProductEventName;
+          p_anon_id: string | null;
+          p_request_id: string | null;
+          p_attribution_code: string | null;
+          p_props: ProductEventProps;
+        };
+        Returns: undefined;
       };
       // Returns null while no commission rate is configured. Callers must
       // render nothing in that case — never a zero.

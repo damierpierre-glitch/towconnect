@@ -11,6 +11,7 @@ import { Input, Label } from '@/components/ui/Field';
 import { formatDateTime } from '@/lib/formatDate';
 import { issueRefund, preparePayout, setPayoutState, type AdminFinanceOverview } from '@/lib/actions/finance';
 import type { ConnectAvailability } from '@/lib/actions/connect';
+import { errorMessageKey } from '@/lib/errors';
 
 // The platform's finance view. Read-mostly on purpose: the only two things it
 // can DO are issue a refund and prepare a payout, and both are deliberate,
@@ -36,7 +37,7 @@ export function FinanceAdmin({
       await fn();
       showToast('✅', done);
     } catch (e) {
-      showToast('⚠️', e instanceof Error ? e.message : 'Error');
+      showToast('⚠️', t(errorMessageKey(e)));
     } finally {
       setBusy(false);
     }

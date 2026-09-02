@@ -15,6 +15,7 @@ import { openIncident } from '@/lib/actions/operations';
 import { OperationsNav, type Capabilities } from '../../OperationsNav';
 import type { DispatchCandidateRow, IncidentSeverity, IncidentType } from '@/lib/supabase/types';
 import type { JobDetail } from '@/lib/actions/operations';
+import { errorMessageKey } from '@/lib/errors';
 
 // One job, everything about it — but not all at once.
 //
@@ -43,7 +44,7 @@ export function JobDetailView({
   detail: JobDetail;
   candidates: DispatchCandidateRow[];
 }) {
-  const { lang } = useLanguage();
+  const { lang, t } = useLanguage();
   const { showToast } = useToast();
   const [tab, setTab] = useState<Tab>('summary');
   const [busy, setBusy] = useState(false);
@@ -80,7 +81,7 @@ export function JobDetailView({
       showToast('✅', lang === 'fr' ? 'Incident ouvert.' : 'Incident opened.');
       setIncidentForm({ ...incidentForm, title: '', description: '' });
     } catch (e) {
-      showToast('⚠️', e instanceof Error ? e.message : 'Error');
+      showToast('⚠️', t(errorMessageKey(e)));
     } finally {
       setBusy(false);
     }
@@ -109,7 +110,7 @@ export function JobDetailView({
             key={t.key}
             onClick={() => setTab(t.key)}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap ${
-              tab === t.key ? 'bg-orange text-white' : 'bg-night-3 text-text-2 border border-steel'
+              tab === t.key ? 'bg-orange-dark text-white' : 'bg-night-3 text-text-2 border border-steel'
             }`}
           >
             {lang === 'fr' ? t.fr : t.en}

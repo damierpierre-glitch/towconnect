@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/Badge';
 import { grantCapability, revokeCapability, type AdminAccount } from '@/lib/actions/operations';
 import { OperationsNav, type Capabilities } from '../OperationsNav';
 import type { AdminCapability } from '@/lib/supabase/types';
+import { errorMessageKey } from '@/lib/errors';
 
 // Who may do what.
 //
@@ -65,7 +66,7 @@ export function AccessControl({
   capabilities: Capabilities;
   accounts: AdminAccount[];
 }) {
-  const { lang } = useLanguage();
+  const { lang, t } = useLanguage();
   const { showToast } = useToast();
   const [busy, setBusy] = useState(false);
 
@@ -75,7 +76,7 @@ export function AccessControl({
       await fn();
       showToast('✅', done);
     } catch (e) {
-      showToast('⚠️', e instanceof Error ? e.message : 'Error');
+      showToast('⚠️', t(errorMessageKey(e)));
     } finally {
       setBusy(false);
     }

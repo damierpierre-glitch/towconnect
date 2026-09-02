@@ -4,6 +4,11 @@
   --color-orange: #ff5c1a;
   --color-orange-dark: #cc4400;
   --color-orange-light: #ff8a5c;
+  /* Added in Phase 10 for the hover state of a filled button. See the
+     contrast note in components/ui/Button.tsx: this is the only orange in
+     the palette that carries white text and gets DARKER on hover, so the
+     contrast improves under the cursor instead of degrading. */
+  --color-orange-deep: #b33c00;
   --color-night: #0d0d0d;
   --color-night-2: #161616;
   --color-night-3: #1f1f1f;
@@ -25,6 +30,7 @@
   --color-orange: var(--color-orange);
   --color-orange-dark: var(--color-orange-dark);
   --color-orange-light: var(--color-orange-light);
+  --color-orange-deep: var(--color-orange-deep);
   --color-night: var(--color-night);
   --color-night-2: var(--color-night-2);
   --color-night-3: var(--color-night-3);

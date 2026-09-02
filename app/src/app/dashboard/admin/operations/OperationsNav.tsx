@@ -30,6 +30,8 @@ export function OperationsNav({ capabilities }: { capabilities: Capabilities }) 
     { href: '/dashboard/admin/operations/directory', fr: 'Flotte', en: 'Fleet', show: capabilities.operations },
     { href: '/dashboard/admin/operations/zones', fr: 'Zones', en: 'Zones', show: capabilities.operations },
     { href: '/dashboard/admin/operations/support', fr: 'Support', en: 'Support', show: capabilities.support || capabilities.operations },
+    { href: '/dashboard/admin/operations/health', fr: 'État', en: 'Health', show: capabilities.operations },
+    { href: '/dashboard/admin/operations/pilot', fr: 'Pilote', en: 'Pilot', show: capabilities.operations },
     {
       href: '/dashboard/admin/operations/exports',
       fr: 'Exports',
@@ -52,7 +54,7 @@ export function OperationsNav({ capabilities }: { capabilities: Capabilities }) 
               key={l.href}
               href={l.href}
               className={`px-3.5 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
-                active ? 'bg-orange text-white' : 'bg-night-2 text-text-2 border border-night-4 hover:text-orange'
+                active ? 'bg-orange-dark text-white' : 'bg-night-2 text-text-2 border border-night-4 hover:text-orange'
               }`}
             >
               {lang === 'fr' ? l.fr : l.en}

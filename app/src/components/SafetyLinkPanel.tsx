@@ -6,6 +6,7 @@ import { useToast } from '@/components/ToastProvider';
 import { Button } from '@/components/ui/Button';
 import { createSafetyLink, getSafetyLinkStatus, revokeSafetyLink } from '@/lib/actions/safety';
 import type { SafetyLink } from '@/lib/supabase/types';
+import { errorMessageKey } from '@/lib/errors';
 
 // "Let somebody know where I am."
 //
@@ -14,7 +15,7 @@ import type { SafetyLink } from '@/lib/supabase/types';
 // the screen says so rather than hiding a Copy button that would fail. If
 // somebody loses the link, they generate a new one, and the old one dies.
 export function SafetyLinkPanel({ requestId }: { requestId: string }) {
-  const { lang } = useLanguage();
+  const { lang, t } = useLanguage();
   const { showToast } = useToast();
   const [link, setLink] = useState<SafetyLink | null>(null);
   const [freshUrl, setFreshUrl] = useState<string | null>(null);
@@ -47,7 +48,7 @@ export function SafetyLinkPanel({ requestId }: { requestId: string }) {
         // Clipboard access is not always granted; the URL is on screen anyway.
       }
     } catch (e) {
-      showToast('⚠️', e instanceof Error ? e.message : 'Error');
+      showToast('⚠️', t(errorMessageKey(e)));
     } finally {
       setBusy(false);
     }
@@ -61,7 +62,7 @@ export function SafetyLinkPanel({ requestId }: { requestId: string }) {
       await load();
       showToast('✅', lang === 'fr' ? 'Lien désactivé.' : 'Link turned off.');
     } catch (e) {
-      showToast('⚠️', e instanceof Error ? e.message : 'Error');
+      showToast('⚠️', t(errorMessageKey(e)));
     } finally {
       setBusy(false);
     }

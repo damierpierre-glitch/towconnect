@@ -6,11 +6,15 @@ import { createClient } from '@/lib/supabase/client';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { MapView } from '@/components/MapView';
+import { MapView } from '@/components/LazyMapView';
 import { distanceKm, estimateEtaMinutes, estimatePriceBreakdown } from '@/lib/pricing';
 import { STRIPE_CONFIGURED } from '@/lib/stripe/client';
 import { hasDefaultPaymentMethod } from '@/lib/actions/payments';
 import { RegulatedZoneNotice, useRegulatedZone } from '@/components/RegulatedZoneNotice';
+import { checkPilotGate } from '@/lib/actions/pilot';
+import { track } from '@/lib/analytics';
+import { ERROR_MESSAGE_KEYS } from '@/lib/errors';
+import type { PilotGateAnswer } from '@/lib/supabase/types';
 import type { RequestFormData } from './types';
 
 // Same escalating tiers Smart Dispatch itself uses server-side
@@ -41,12 +45,39 @@ export function StepEstimate({
   const [notFound, setNotFound] = useState(false);
   const [checkingPaymentMethod, setCheckingPaymentMethod] = useState(STRIPE_CONFIGURED);
   const [hasPaymentMethod, setHasPaymentMethod] = useState(!STRIPE_CONFIGURED);
+  const [gate, setGate] = useState<PilotGateAnswer | null>(null);
 
   // The regulatory check happens BEFORE the customer commits, not after.
   // Confirming a request we are not allowed to serve would authorize a card
   // for a job no TowConnect truck can legally take, and then explain the
   // problem afterwards. The database is asked first.
   const { zone, checked: zoneChecked } = useRegulatedZone(form.lat, form.lng);
+
+  // And the pilot gate, asked here for exactly the reason the regulatory
+  // check is asked here: refusing after a card has been authorized is a worse
+  // experience than refusing before, and a worse one to explain. The database
+  // trigger still refuses on its own (0047) — this is so the person gets a
+  // sentence instead of a failure.
+  useEffect(() => {
+    let cancelled = false;
+    checkPilotGate(form.lat, form.lng).then((answer) => {
+      if (!cancelled) setGate(answer);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.lat, form.lng]);
+
+  const gateRefusalKey =
+    gate && !gate.allowed
+      ? gate.reason === 'paused'
+        ? ERROR_MESSAGE_KEYS.pilot_paused
+        : gate.reason === 'outside_territory'
+          ? ERROR_MESSAGE_KEYS.pilot_outside_territory
+          : gate.reason === 'outside_hours'
+            ? ERROR_MESSAGE_KEYS.pilot_outside_hours
+            : ERROR_MESSAGE_KEYS.pilot_not_on_allowlist
+      : null;
   const zoneBlocksDispatch =
     zone !== null &&
     (zone.dispatch_mode === 'external_authority_required' ||
@@ -88,6 +119,9 @@ export function StepEstimate({
           tier: tier.labelKey,
         });
         setLoading(false);
+        // The step counts when the number is on screen, not when the search
+        // started: a search that found nobody is not an estimate shown.
+        track('estimate_shown', { problem_type: form.problemType, source: tier.labelKey });
         return;
       }
     }
@@ -126,6 +160,7 @@ export function StepEstimate({
 
   async function handleConfirm() {
     if (!estimate || !hasPaymentMethod) return;
+    track('checkout_started', { problem_type: form.problemType });
     setConfirming(true);
     try {
       await onConfirm();
@@ -187,6 +222,19 @@ export function StepEstimate({
         </div>
       ) : null}
 
+      {/* The pilot refusal, stated plainly. It sits below the regulatory
+          notice because a legal instruction outranks a commercial one: if
+          both apply, the motorist needs the law first. */}
+      {gateRefusalKey ? (
+        <div
+          role="status"
+          className="bg-night-3 border border-orange rounded-xl p-4 mb-4"
+        >
+          <p className="text-sm text-text-2">{t(gateRefusalKey)}</p>
+          {gate?.detail ? <p className="text-xs text-muted mt-2">{gate.detail}</p> : null}
+        </div>
+      ) : null}
+
       {estimate && !zoneBlocksDispatch && !checkingPaymentMethod && !hasPaymentMethod ? (
         <div className="bg-night-3 border border-orange rounded-xl p-4 mb-4 text-center">
           <p className="text-sm text-text-2 mb-3">{t('payment_method_required')}</p>
@@ -206,10 +254,17 @@ export function StepEstimate({
             dispatching — the official instruction above is the action. A
             disabled button would still suggest this is something TowConnect
             could do for you if you tried again. */}
-        {!zoneBlocksDispatch ? (
+        {!zoneBlocksDispatch && !gateRefusalKey ? (
           <Button
             className="flex-[2]"
-            disabled={!estimate || confirming || !zoneChecked || checkingPaymentMethod || !hasPaymentMethod}
+            disabled={
+              !estimate ||
+              confirming ||
+              !zoneChecked ||
+              gate === null ||
+              checkingPaymentMethod ||
+              !hasPaymentMethod
+            }
             onClick={handleConfirm}
           >
             {confirming ? '…' : `🚨 ${t('btn_confirm_dispatch')}`}

@@ -18,6 +18,7 @@ import type {
   NotificationCategory,
   NotificationPreference,
 } from '@/lib/supabase/types';
+import { errorMessageKey } from '@/lib/errors';
 
 // The notification centre.
 //
@@ -144,7 +145,7 @@ export function NotificationCentre({
   notifications: AppNotification[];
   preferences: NotificationPreference[];
 }) {
-  const { lang } = useLanguage();
+  const { lang, t } = useLanguage();
   const { showToast } = useToast();
   const [busy, setBusy] = useState(false);
   const [readIds, setReadIds] = useState<Set<number>>(new Set());
@@ -162,7 +163,7 @@ export function NotificationCentre({
       await fn();
       if (done) showToast('✅', done);
     } catch (e) {
-      showToast('⚠️', e instanceof Error ? e.message : 'Error');
+      showToast('⚠️', t(errorMessageKey(e)));
     } finally {
       setBusy(false);
     }

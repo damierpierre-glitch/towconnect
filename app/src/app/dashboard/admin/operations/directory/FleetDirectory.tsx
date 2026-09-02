@@ -52,7 +52,7 @@ export function FleetDirectory({
             key={key}
             onClick={() => setTab(key)}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-medium ${
-              tab === key ? 'bg-orange text-white' : 'bg-night-3 text-text-2 border border-steel'
+              tab === key ? 'bg-orange-dark text-white' : 'bg-night-3 text-text-2 border border-steel'
             }`}
           >
             {key === 'companies'

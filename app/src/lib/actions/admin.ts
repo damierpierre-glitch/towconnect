@@ -2,14 +2,20 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { requireCapability } from '@/lib/auth/capabilities';
 import type { DriverApprovalStatus, DriverDocument, DriverDocumentStatus } from '@/lib/supabase/types';
 
-// No explicit "is this caller an admin?" check in any function below — same
-// as the pre-Phase-5 version of this file. RLS is the actual enforcement
-// ("driver_profiles: admins full access" / "driver_documents: admins full
-// access", both gated on public.is_admin()); a non-admin session gets 0 rows
-// updated, not a bypass. Checking here too would just be a second copy of
-// the same rule to keep in sync.
+// RLS is the actual enforcement in every function below: a caller without the
+// right grant gets zero rows updated, not a bypass. The checks that DO appear
+// exist for a different reason — so somebody gets a sentence instead of a
+// silent no-op, and so the failure names the capability they are missing.
+//
+// PHASE 10 SECURITY REVIEW
+// Driver documents are identity documents. Until 0048 their policies were
+// keyed on is_admin(), which after 0044 meant an administrator granted only
+// `finance` could read every driver's licence and insurance — both the row
+// and the image behind a signed URL. They are now scoped to `operations`, in
+// the database and here.
 async function setDriverApproval(profileId: string, status: DriverApprovalStatus, rejectionReason: string | null) {
   const supabase = await createClient();
   const { error } = await supabase
@@ -77,9 +83,14 @@ export async function reviewDriverDocument(documentId: string, status: DriverDoc
 
 // A time-limited link into the private driver-documents bucket. Works from
 // the admin's own session — no service-role key involved — because the
-// "driver-documents storage: admins read all" policy (0019) already grants
-// this session read access to every path in the bucket.
+// "driver-documents storage: operations read all" policy (0048) grants that
+// session read access to the bucket.
+//
+// The capability check below is not the protection; the storage policy is. It
+// is here so an administrator without `operations` is told which capability
+// they are missing, rather than receiving a signed URL that 404s.
 export async function getDriverDocumentSignedUrl(storagePath: string): Promise<string> {
+  await requireCapability('operations');
   const supabase = await createClient();
   const { data, error } = await supabase.storage.from('driver-documents').createSignedUrl(storagePath, 120);
   if (error || !data) throw error ?? new Error('Could not create a signed URL');

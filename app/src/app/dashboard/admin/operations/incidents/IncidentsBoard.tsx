@@ -23,6 +23,7 @@ import type {
   OperationalIncident,
   RiskFlag,
 } from '@/lib/supabase/types';
+import { errorMessageKey } from '@/lib/errors';
 
 // Incidents and risk signals.
 //
@@ -66,7 +67,7 @@ export function IncidentsBoard({
   incidents: OperationalIncident[];
   flags: RiskFlag[];
 }) {
-  const { lang } = useLanguage();
+  const { lang, t } = useLanguage();
   const { showToast } = useToast();
   const [busy, setBusy] = useState(false);
   const [statusFilter, setStatusFilter] = useState<IncidentStatus | 'all'>('open');
@@ -93,7 +94,7 @@ export function IncidentsBoard({
       await fn();
       showToast('✅', done);
     } catch (e) {
-      showToast('⚠️', e instanceof Error ? e.message : 'Error');
+      showToast('⚠️', t(errorMessageKey(e)));
     } finally {
       setBusy(false);
     }
@@ -186,7 +187,7 @@ export function IncidentsBoard({
             key={key}
             onClick={() => setStatusFilter(key as IncidentStatus | 'all')}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
-              statusFilter === key ? 'bg-orange text-white' : 'bg-night-3 text-text-2 border border-steel'
+              statusFilter === key ? 'bg-orange-dark text-white' : 'bg-night-3 text-text-2 border border-steel'
             }`}
           >
             {key === 'open' ? (lang === 'fr' ? 'Ouverts' : 'Open') : key}

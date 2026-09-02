@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/Button';
 import { Input, Label } from '@/components/ui/Field';
 import type { UserRole } from '@/lib/supabase/types';
 import { BrandMark } from '@/components/BrandMark';
+import { track } from '@/lib/analytics';
 
 export default function SignupPage() {
   const { t, lang } = useLanguage();
@@ -28,6 +29,7 @@ export default function SignupPage() {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    track('signup_started', { source: role });
 
     const { data, error: signUpError } = await supabase.auth.signUp({
       email,
@@ -36,7 +38,9 @@ export default function SignupPage() {
     });
 
     if (signUpError) {
-      setError(t('error_generic'));
+      // Names the two things that actually go wrong here, without confirming
+      // whether the address is already registered.
+      setError(t('err_signup_failed'));
       setLoading(false);
       return;
     }
@@ -48,11 +52,13 @@ export default function SignupPage() {
       return;
     }
 
+    track('auth_completed', { source: 'signup' });
     router.push(roleHome(role));
     router.refresh();
   }
 
   async function handleGoogle() {
+    track('signup_started', { source: 'google' });
     await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: `${window.location.origin}/auth/callback` },
@@ -88,11 +94,15 @@ export default function SignupPage() {
         <Card>
           <h1 className="font-display text-2xl font-bold mb-6">{t('signup_title')}</h1>
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <div>
-              <Label>{t('signup_role')}</Label>
+            {/* Two buttons acting as one choice, so the group is named and
+                each button reports whether it is the chosen one — until now
+                that was conveyed by colour alone. */}
+            <div role="group" aria-labelledby="signup-role-label">
+              <Label id="signup-role-label">{t('signup_role')}</Label>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
+                  aria-pressed={role === 'user'}
                   onClick={() => setRole('user')}
                   className={`px-3 py-3 rounded-xl border text-sm font-medium transition-colors ${
                     role === 'user' ? 'border-orange bg-orange/10 text-orange' : 'border-steel text-text-2'
@@ -102,6 +112,7 @@ export default function SignupPage() {
                 </button>
                 <button
                   type="button"
+                  aria-pressed={role === 'driver'}
                   onClick={() => setRole('driver')}
                   className={`px-3 py-3 rounded-xl border text-sm font-medium transition-colors ${
                     role === 'driver' ? 'border-orange bg-orange/10 text-orange' : 'border-steel text-text-2'
@@ -112,12 +123,20 @@ export default function SignupPage() {
               </div>
             </div>
             <div>
-              <Label>{t('signup_name')}</Label>
-              <Input required value={fullName} onChange={(e) => setFullName(e.target.value)} />
+              <Label htmlFor="signup-name">{t('signup_name')}</Label>
+              <Input
+                id="signup-name"
+                autoComplete="name"
+                required
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+              />
             </div>
             <div>
-              <Label>{t('login_email')}</Label>
+              <Label htmlFor="signup-email">{t('login_email')}</Label>
               <Input
+                id="signup-email"
+                autoComplete="email"
                 type="email"
                 required
                 value={email}
@@ -125,8 +144,10 @@ export default function SignupPage() {
               />
             </div>
             <div>
-              <Label>{t('login_password')}</Label>
+              <Label htmlFor="signup-password">{t('login_password')}</Label>
               <Input
+                id="signup-password"
+                autoComplete="new-password"
                 type="password"
                 required
                 minLength={6}
@@ -134,7 +155,11 @@ export default function SignupPage() {
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
-            {error ? <p className="text-sm text-red">{error}</p> : null}
+            {error ? (
+              <p role="alert" className="text-sm text-red">
+                {error}
+              </p>
+            ) : null}
             <Button type="submit" full disabled={loading}>
               {t('signup_submit')}
             </Button>

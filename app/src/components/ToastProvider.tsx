@@ -29,16 +29,33 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      {toast ? (
-        <div
-          key={toast.id}
-          className="fixed bottom-6 right-6 z-[300] flex items-center gap-2.5 bg-night-2 border border-orange rounded-xl px-4.5 py-3.5 shadow-2xl animate-in"
-          style={{ animation: 'slide-in 0.3s ease' }}
-        >
-          <span className="text-lg">{toast.icon}</span>
-          <span className="text-sm">{toast.message}</span>
-        </div>
-      ) : null}
+      {/* A live region, always present.
+          A toast is frequently the ONLY feedback for an action — "supplement
+          declined", "location unavailable", "your card was refused". Rendered
+          without one, a screen-reader user performs the action and hears
+          nothing at all. The region has to exist before the message arrives,
+          which is why the wrapper is unconditional and only its contents are
+          conditional. The icon is decorative and hidden: "warning sign" read
+          aloud before every message adds nothing. */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="fixed bottom-6 right-6 z-[300] pointer-events-none"
+      >
+        {toast ? (
+          <div
+            key={toast.id}
+            className="flex items-center gap-2.5 bg-night-2 border border-orange rounded-xl px-4.5 py-3.5 shadow-2xl animate-in"
+            style={{ animation: 'slide-in 0.3s ease' }}
+          >
+            <span className="text-lg" aria-hidden="true">
+              {toast.icon}
+            </span>
+            <span className="text-sm">{toast.message}</span>
+          </div>
+        ) : null}
+      </div>
       <style>{`
         @keyframes slide-in {
           from { transform: translateX(100px); opacity: 0; }

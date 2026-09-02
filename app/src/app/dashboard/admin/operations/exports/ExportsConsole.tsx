@@ -10,6 +10,7 @@ import { Input, Label, Select } from '@/components/ui/Field';
 import { formatDateTime } from '@/lib/formatDate';
 import { runExport, type AvailableDataset, type ExportAuditRow } from '@/lib/actions/exports';
 import { OperationsNav, type Capabilities } from '../OperationsNav';
+import { errorMessageKey } from '@/lib/errors';
 
 // Exports.
 //
@@ -27,7 +28,7 @@ export function ExportsConsole({
   datasets: AvailableDataset[];
   audit: ExportAuditRow[];
 }) {
-  const { lang } = useLanguage();
+  const { lang, t } = useLanguage();
   const { showToast } = useToast();
   const [busy, setBusy] = useState(false);
   const [dataset, setDataset] = useState(datasets[0]?.key ?? '');
@@ -70,7 +71,7 @@ export function ExportsConsole({
           : `${result.rowCount} ${lang === 'fr' ? 'ligne(s) exportée(s).' : 'row(s) exported.'}`
       );
     } catch (e) {
-      showToast('⚠️', e instanceof Error ? e.message : 'Error');
+      showToast('⚠️', t(errorMessageKey(e)));
     } finally {
       setBusy(false);
     }

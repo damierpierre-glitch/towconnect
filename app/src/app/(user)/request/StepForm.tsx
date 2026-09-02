@@ -9,6 +9,8 @@ import { Input, Label, Textarea } from '@/components/ui/Field';
 import { geocodeAddress, reverseGeocode, type GeocodeResult } from '@/lib/mapbox';
 import { createVehicle } from '@/lib/actions/vehicles';
 import { problemRequiresDestination } from '@/lib/constants';
+import { track } from '@/lib/analytics';
+import { errorMessageKey } from '@/lib/errors';
 import type { Vehicle } from '@/lib/supabase/types';
 import { FALLBACK_CENTER, PROBLEM_TYPES, type RequestFormData } from './types';
 
@@ -20,30 +22,41 @@ function vehicleLabel(v: Pick<Vehicle, 'year' | 'make' | 'model'>) {
 
 export function StepForm({
   vehicles,
+  initial,
   onSubmit,
 }: {
   vehicles: Vehicle[];
+  /** What was filled in last time, when the rider came back from the estimate. */
+  initial?: RequestFormData | null;
   onSubmit: (data: RequestFormData) => void;
 }) {
   const { t, lang } = useLanguage();
   const { showToast } = useToast();
-  const [problemKey, setProblemKey] = useState('');
-  const [locationText, setLocationText] = useState('');
-  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [notes, setNotes] = useState('');
+  const [problemKey, setProblemKey] = useState(initial?.problemKey ?? '');
+  const [locationText, setLocationText] = useState(initial?.locationText ?? '');
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(
+    initial ? { lat: initial.lat, lng: initial.lng } : null
+  );
+  const [notes, setNotes] = useState(initial?.notes ?? '');
   const [suggestions, setSuggestions] = useState<GeocodeResult[]>([]);
   const [detecting, setDetecting] = useState(false);
   const [locationError, setLocationError] = useState(false);
   const [editingLocation, setEditingLocation] = useState(false);
 
-  const [destinationText, setDestinationText] = useState('');
-  const [destinationCoords, setDestinationCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [destinationText, setDestinationText] = useState(initial?.destinationAddress ?? '');
+  const [destinationCoords, setDestinationCoords] = useState<{ lat: number; lng: number } | null>(
+    initial?.destinationLat != null && initial?.destinationLng != null
+      ? { lat: initial.destinationLat, lng: initial.destinationLng }
+      : null
+  );
   const [destinationSuggestions, setDestinationSuggestions] = useState<GeocodeResult[]>([]);
   const needsDestination = problemRequiresDestination(problemKey);
 
   const [myVehicles, setMyVehicles] = useState(vehicles);
   const primary = myVehicles.find((v) => v.is_primary) ?? myVehicles[0] ?? null;
-  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(primary?.id ?? null);
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(
+    initial?.vehicleId ?? primary?.id ?? null
+  );
   const [addingVehicle, setAddingVehicle] = useState(myVehicles.length === 0);
   const [quickVehicle, setQuickVehicle] = useState({ make: '', model: '', year: CURRENT_YEAR });
   const [savingVehicle, setSavingVehicle] = useState(false);
@@ -52,14 +65,20 @@ export function StepForm({
   // already granted elsewhere in the app. Never blocks the form: on denial or
   // absence of support, the user just falls back to typing an address.
   useEffect(() => {
+    // Nothing to detect if the rider already gave us a place — including on
+    // the way back from the estimate. Re-detecting here would overwrite a
+    // correction the rider just came back to make.
+    if (initial) return;
     if (!navigator.geolocation) {
       // Deferred, not called synchronously in the effect body: same pattern
       // as LanguageProvider's mount-time localStorage read.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setLocationError(true);
+      track('location_denied', { reason: 'unsupported' });
       return;
     }
     setDetecting(true);
+    const startedAt = Date.now();
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const { latitude, longitude } = pos.coords;
@@ -68,13 +87,24 @@ export function StepForm({
         setCoords({ lat: latitude, lng: longitude });
         setLocationText(label);
         setDetecting(false);
+        // How long it took matters: a location that arrives after fifteen
+        // seconds is, to somebody at the roadside, a location that failed.
+        track('location_obtained', { duration_ms: Date.now() - startedAt });
       },
-      () => {
+      (err) => {
         setDetecting(false);
         setLocationError(true);
+        track('location_denied', {
+          reason: err.code === err.PERMISSION_DENIED ? 'denied' : 'unavailable',
+          duration_ms: Date.now() - startedAt,
+        });
       },
       { timeout: 8000 }
     );
+    // Mount only. `initial` is read once to decide whether detection should
+    // run at all; re-running on a change to it would fight the rider for the
+    // location field, which is the exact bug this guard exists to prevent.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleLocationChange(value: string) {
@@ -97,7 +127,7 @@ export function StepForm({
 
   function detectLocation() {
     if (!navigator.geolocation) {
-      showToast('⚠️', t('error_generic'));
+      showToast('📍', t('err_location_unavailable'));
       return;
     }
     setDetecting(true);
@@ -111,10 +141,14 @@ export function StepForm({
         setDetecting(false);
         setEditingLocation(false);
       },
-      () => {
+      (err) => {
         setDetecting(false);
         setLocationError(true);
-        showToast('⚠️', t('error_generic'));
+        // A refused permission and a satellite fix that never arrived need
+        // different sentences: one is fixed in browser settings, the other by
+        // typing an address. Telling somebody the wrong one wastes the minute
+        // they have least of.
+        showToast('📍', t(errorMessageKey(err)));
       }
     );
   }
@@ -161,6 +195,11 @@ export function StepForm({
     const finalCoords = coords ?? FALLBACK_CENTER;
     const selectedVehicle = myVehicles.find((v) => v.id === selectedVehicleId) ?? null;
 
+    // The kind of problem and whether a destination was needed. Never the
+    // address, never the vehicle, never the note.
+    track('situation_selected', { problem_type: problem.key, has_destination: needsDestination });
+    track('vehicle_selected', { vehicle_type: selectedVehicle ? 'saved' : 'none' });
+
     onSubmit({
       problemType: problem.key,
       problemKey: problem.key,
@@ -190,12 +229,20 @@ export function StepForm({
         {/* Problem type — large touch targets, not a select, for a stressed
             roadside user tapping with cold/wet fingers. */}
         <div>
-          <Label>{t('lbl_type')}</Label>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {/* A group rather than a label: this is eight buttons, not one
+              field, so the heading has to be announced as the group's name.
+              And each button carries aria-pressed, because until Phase 10 the
+              only thing distinguishing the chosen option was its colour —
+              which a screen reader cannot see and a colour-blind user may not
+              either. */}
+          <div role="group" aria-labelledby="problem-type-label">
+            <Label id="problem-type-label">{t('lbl_type')}</Label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {PROBLEM_TYPES.map((p) => (
               <button
                 key={p.key}
                 type="button"
+                aria-pressed={problemKey === p.key}
                 onClick={() => setProblemKey(p.key)}
                 className={`flex flex-col items-center justify-center gap-1 py-3.5 px-2 rounded-xl border text-xs font-medium text-center transition-colors ${
                   problemKey === p.key
@@ -203,16 +250,19 @@ export function StepForm({
                     : 'border-steel text-text-2 hover:border-orange/50'
                 }`}
               >
-                <span className="text-xl">{p.icon}</span>
+                <span className="text-xl" aria-hidden="true">
+                  {p.icon}
+                </span>
                 {lang === 'fr' ? p.fr : p.en}
               </button>
             ))}
+            </div>
           </div>
         </div>
 
         {/* Location — auto-detected on load; editable, never blocking. */}
         <div className="relative">
-          <Label>{t('lbl_loc')}</Label>
+          <Label htmlFor="pickup-location">{t('lbl_loc')}</Label>
           {!editingLocation && locationText && !detecting ? (
             <div className="flex items-center justify-between gap-2 px-3.5 py-3 bg-night-3 border border-steel rounded-xl">
               <span className="text-sm flex items-center gap-2">📍 {locationText}</span>
@@ -227,6 +277,7 @@ export function StepForm({
           ) : (
             <div className="flex gap-2">
               <Input
+                id="pickup-location"
                 required
                 autoFocus={editingLocation}
                 className="flex-1"
@@ -240,8 +291,16 @@ export function StepForm({
                 value={locationText}
                 onChange={(e) => handleLocationChange(e.target.value)}
               />
-              <Button type="button" variant="secondary" onClick={detectLocation} disabled={detecting}>
-                📍
+              {/* An emoji is not a name. Without this the button announces as
+                  "round pushpin", or as nothing at all. */}
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={detectLocation}
+                disabled={detecting}
+                aria-label={lang === 'fr' ? 'Détecter ma position' : 'Detect my location'}
+              >
+                <span aria-hidden="true">📍</span>
               </Button>
             </div>
           )}
@@ -269,13 +328,14 @@ export function StepForm({
             services, never shown as a dead/irrelevant step. */}
         {needsDestination ? (
           <div className="relative">
-            <Label>{t('lbl_destination')}</Label>
+            <Label htmlFor="destination">{t('lbl_destination')}</Label>
             <p className="text-xs text-muted mb-2">{t('destination_hint')}</p>
             <div className="flex items-center gap-2 mb-1 text-xs text-muted">
               <span className="truncate">📍 {locationText || '—'}</span>
               <span>→</span>
             </div>
             <Input
+              id="destination"
               required
               placeholder={lang === 'fr' ? 'Ex: Garage ABC, 123 rue Principale' : 'e.g. ABC Garage, 123 Main St'}
               value={destinationText}

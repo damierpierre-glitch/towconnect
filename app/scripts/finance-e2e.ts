@@ -39,6 +39,22 @@ import {
   quoteProviderCompensation,
 } from '@/lib/actions/economics';
 import { createRequest, cancelRequest } from '@/lib/actions/requests';
+
+// Since Phase 10, createRequest() can answer with a refusal instead of a
+// request — the pilot gate (0047). Every fixture below runs with the pilot
+// off, so a refusal here is a broken test environment rather than an outcome
+// worth handling, and it should stop the run loudly instead of producing a
+// confusing failure four assertions later.
+async function createRequestOrFail(input: Parameters<typeof createRequest>[0]) {
+  const result = await createRequest(input);
+  if ('refused' in result) {
+    throw new Error(
+      `The pilot gate refused a fixture request (${result.reason}). ` +
+        'Check pilot_config.mode — these fixtures require it to be off.'
+    );
+  }
+  return result;
+}
 import { acceptRequest, advanceRequestStatus } from '@/lib/actions/driver';
 import { proposeSupplement, respondToSupplement } from '@/lib/actions/supplements';
 import {
@@ -396,7 +412,7 @@ async function main() {
     sect('3. A real course with real sandbox economics');
     // ================================================================
     actAs(rider.token, 'rider');
-    const created = await createRequest({
+    const created = await createRequestOrFail({
       problemType: 'battery',
       locationText: 'Phase 7.1 — main scenario',
       lat: MTL.lat,
@@ -942,10 +958,21 @@ async function main() {
         .eq('request_id', created.requestId);
 
       const first = await replayEvent(refundEventId);
+      // A 400 "Invalid signature" here is not a defect in the webhook — real
+      // Stripe events are arriving and being processed. It means the local
+      // STRIPE_WEBHOOK_SECRET no longer matches the secret configured on the
+      // deployed endpoint, so this test can no longer sign a payload that
+      // deployment will accept. Said explicitly, because "invalid signature"
+      // otherwise reads as a security failure rather than an env one.
+      const signatureMismatch = first.status === 400 && /Invalid signature/i.test(first.body);
       ok(
         'a correctly signed replay is accepted (the signature really verifies)',
         first.status === 200,
-        `${first.status} ${first.body}`
+        signatureMismatch
+          ? 'the local STRIPE_WEBHOOK_SECRET does not match the deployed endpoint. Real Stripe ' +
+            'events are still being processed; this suite simply cannot sign one that ' +
+            `${WEBHOOK_ENDPOINT} will accept. Copy the endpoint secret from the Stripe dashboard.`
+          : `${first.status} ${first.body}`
       );
       const second = await replayEvent(refundEventId);
       ok(
@@ -985,7 +1012,7 @@ async function main() {
     sect('9. Cancellations');
     // ================================================================
     actAs(rider.token, 'rider');
-    const beforeMatch = await createRequest({
+    const beforeMatch = await createRequestOrFail({
       problemType: 'battery',
       locationText: 'Phase 7.1 — cancel before match',
       lat: MTL.lat,
@@ -1026,7 +1053,7 @@ async function main() {
     }
 
     // After matching, with no cancellation policy configured.
-    const afterMatch = await createRequest({
+    const afterMatch = await createRequestOrFail({
       problemType: 'battery',
       locationText: 'Phase 7.1 — cancel after match',
       lat: MTL.lat,
@@ -1075,7 +1102,7 @@ async function main() {
     sect('8. Full refund on a separate fixture');
     // ================================================================
     actAs(rider.token, 'rider');
-    const full = await createRequest({
+    const full = await createRequestOrFail({
       problemType: 'battery',
       locationText: 'Phase 7.1 — full refund fixture',
       lat: MTL.lat,

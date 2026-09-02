@@ -1,11 +1,21 @@
 'use client';
 
+import { useEffect } from 'react';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
 import { BrandMark } from '@/components/BrandMark';
+import { captureAttribution, track } from '@/lib/analytics';
 
 export function LandingHero() {
   const { t } = useLanguage();
+
+  // The top of the funnel, and the only place a partner code is picked up.
+  // Somebody scans a QR on a garage counter, lands here, and requests three
+  // screens later — so the code is remembered rather than read at the end.
+  useEffect(() => {
+    const code = captureAttribution();
+    track('landing_viewed', code ? { source: 'partner' } : undefined);
+  }, []);
 
   return (
     <div className="overflow-x-hidden">
@@ -40,7 +50,7 @@ export function LandingHero() {
           <div className="flex flex-col sm:flex-row gap-3 sm:justify-center">
             <Link
               href="/signup"
-              className="cta-glow px-8 py-4 rounded-xl bg-orange text-white font-semibold text-[17px] hover:bg-orange-dark transition-colors"
+              className="cta-glow px-8 py-4 rounded-xl bg-orange-dark text-white font-semibold text-[17px] hover:bg-orange-deep transition-colors"
             >
               {t('btn_emergency')}
             </Link>
@@ -82,7 +92,7 @@ export function LandingHero() {
           <p className="text-text-2 max-w-md mx-auto text-pretty mb-7">{t('home_cta_sub')}</p>
           <Link
             href="/signup"
-            className="cta-glow inline-block px-8 py-4 rounded-xl bg-orange text-white font-semibold text-[17px] hover:bg-orange-dark transition-colors"
+            className="cta-glow inline-block px-8 py-4 rounded-xl bg-orange-dark text-white font-semibold text-[17px] hover:bg-orange-deep transition-colors"
           >
             {t('btn_emergency')}
           </Link>

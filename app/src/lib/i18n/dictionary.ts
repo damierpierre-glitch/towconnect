@@ -205,6 +205,37 @@ export const dictionary = {
     signup_submit: "S'inscrire",
     signup_have_account: 'Déjà un compte?',
     error_generic: "Une erreur est survenue. Réessayez.",
+
+    // Phase 10. Every one of these replaces a message that was either the raw
+    // thrown error or nothing at all. Each says what happened AND what the
+    // person can do next — at the roadside, "an error occurred" is useless.
+    err_pilot_paused:
+      "TowConnect n'accepte pas de nouvelles demandes en ce moment. Si vous êtes en situation dangereuse, appelez le 911.",
+    err_pilot_outside_territory:
+      "Cette adresse est en dehors du territoire desservi pendant le projet pilote (Montréal & Rive-Sud). Nous ne pouvons pas vous envoyer quelqu'un ici.",
+    err_pilot_outside_hours:
+      "Le service pilote est fermé en ce moment. Réessayez pendant les heures d'ouverture, ou appelez le 911 en cas d'urgence.",
+    err_pilot_not_on_allowlist:
+      "TowConnect est en projet pilote fermé. Votre compte n'y a pas encore accès.",
+    err_card_declined:
+      'Votre carte a été refusée. Essayez une autre carte, ou vérifiez auprès de votre banque.',
+    err_card_authentication_required:
+      'Votre banque demande une confirmation. Suivez la vérification affichée pour continuer.',
+    err_payment_unavailable:
+      "Le paiement n'a pas pu être traité. Rien ne vous a été facturé. Réessayez dans un instant.",
+    err_signed_out: 'Votre session a expiré. Reconnectez-vous pour continuer.',
+    // Deliberately says nothing about WHICH of the two was wrong: telling
+    // somebody the address exists is telling anybody who asks.
+    err_bad_credentials: 'Courriel ou mot de passe incorrect.',
+    err_signup_failed:
+      "Ce compte n'a pas pu être créé. Le courriel est peut-être déjà utilisé, ou le mot de passe trop court (8 caractères minimum).",
+    err_not_permitted: "Vous n'avez pas accès à cette action.",
+    err_network:
+      'Connexion perdue. Vérifiez votre réseau — votre demande en cours est conservée et vous la retrouverez.',
+    err_location_denied:
+      "La localisation est refusée sur cet appareil. Entrez votre adresse à la main pour continuer.",
+    err_location_unavailable:
+      "Impossible d'obtenir votre position. Entrez votre adresse à la main pour continuer.",
     // ---- Phase 6: regulated zones, business, supplements ----
     zone_detected_title: 'Zone de remorquage réglementée',
     zone_rule_label: 'Règle applicable',
@@ -513,6 +544,31 @@ export const dictionary = {
     signup_submit: 'Sign up',
     signup_have_account: 'Already have an account?',
     error_generic: 'Something went wrong. Please try again.',
+
+    err_pilot_paused:
+      'TowConnect is not accepting new requests right now. If you are somewhere dangerous, call 911.',
+    err_pilot_outside_territory:
+      'That address is outside the area served during the pilot (Montréal & South Shore). We cannot send anybody there.',
+    err_pilot_outside_hours:
+      'The pilot service is closed right now. Try again during opening hours, or call 911 in an emergency.',
+    err_pilot_not_on_allowlist:
+      'TowConnect is in a closed pilot. Your account does not have access yet.',
+    err_card_declined: 'Your card was declined. Try another card, or check with your bank.',
+    err_card_authentication_required:
+      'Your bank wants to confirm this payment. Complete the check shown to continue.',
+    err_payment_unavailable:
+      'The payment could not be processed. You have not been charged. Try again in a moment.',
+    err_signed_out: 'Your session has expired. Sign in again to continue.',
+    err_bad_credentials: 'Email or password is incorrect.',
+    err_signup_failed:
+      'That account could not be created. The email may already be in use, or the password may be too short (8 characters minimum).',
+    err_not_permitted: 'You do not have access to this action.',
+    err_network:
+      'Connection lost. Check your network — any request in progress is kept and you will find it again.',
+    err_location_denied:
+      'Location is blocked on this device. Type your address instead to continue.',
+    err_location_unavailable:
+      'We could not get your position. Type your address instead to continue.',
     // ---- Phase 6: regulated zones, business, supplements ----
     zone_detected_title: 'Regulated towing zone',
     zone_rule_label: 'Applicable rule',
