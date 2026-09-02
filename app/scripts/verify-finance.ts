@@ -21,8 +21,23 @@ if (!url || !key) {
 }
 const admin = createClient(url, key, { auth: { persistSession: false } });
 
-const results: { name: string; pass: boolean; detail?: string }[] = [];
+const results: { name: string; pass: boolean; detail?: string; note?: boolean }[] = [];
 const check = (name: string, pass: boolean, detail?: string) => results.push({ name, pass, detail });
+
+// The Phase 7.1 end-to-end run activates a temporary fixture rate on purpose
+// and calls this script while it is active, because an empty database
+// reconciles vacuously. In that one situation "a configuration is active" is
+// expected, so it is reported rather than failed — every arithmetic check
+// below still applies, and the run's own cleanup asserts the shipped state
+// afterwards.
+const ALLOW_ACTIVE = process.env.VERIFY_FINANCE_ALLOW_ACTIVE === '1';
+const checkConfigState = (name: string, pass: boolean, detail?: string) => {
+  if (ALLOW_ACTIVE && !pass) {
+    results.push({ name: `${name} (expected during an E2E run)`, pass: true, detail, note: true });
+    return;
+  }
+  check(name, pass, detail);
+};
 const money = (v: unknown) => Number(v ?? 0);
 const near = (a: number, b: number, tol = 0.005) => Math.abs(a - b) < tol;
 
@@ -31,16 +46,16 @@ async function main() {
   // Stated first because it is the fact most likely to be quietly untrue
   // after somebody experiments, and the one with the largest consequence.
   const { data: active } = await admin.from('pricing_configs').select('id, label, version').eq('status', 'active');
-  check(
+  checkConfigState(
     'no economic configuration is active',
     (active ?? []).length === 0,
     (active ?? []).map((c) => `v${c.version} ${c.label}`).join(', ')
   );
   const { data: configured } = await admin.rpc('pricing_configured' as never, {} as never);
-  check('pricing_configured() is false', configured === false, String(configured));
+  checkConfigState('pricing_configured() is false', configured === false, String(configured));
 
   const { data: fixtures } = await admin.from('pricing_configs').select('id, status, label').ilike('label', 'FIXTURE%');
-  check(
+  checkConfigState(
     'every test fixture configuration is archived',
     (fixtures ?? []).every((c) => c.status === 'archived'),
     (fixtures ?? []).filter((c) => c.status !== 'archived').map((c) => c.label).join(', ')
@@ -220,7 +235,8 @@ main()
     console.log('\nFinancial reconciliation:\n');
     let allPass = true;
     for (const r of results) {
-      console.log(`  ${r.pass ? '✓' : '✗'} ${r.name}${!r.pass && r.detail ? ` — ${r.detail}` : ''}`);
+      const mark = r.note ? '·' : r.pass ? '✓' : '✗';
+      console.log(`  ${mark} ${r.name}${!r.pass && r.detail ? ` — ${r.detail}` : ''}`);
       if (!r.pass) allPass = false;
     }
     console.log('');

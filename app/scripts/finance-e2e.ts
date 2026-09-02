@@ -616,8 +616,8 @@ async function main() {
 
     const { data: delivered } = await admin
       .from('stripe_webhook_events')
-      .select('type, created_at')
-      .order('created_at', { ascending: false })
+      .select('type, processed_at')
+      .order('processed_at', { ascending: false })
       .limit(8);
     record(
       'note',
@@ -1156,7 +1156,7 @@ async function main() {
     const reconcile = async (requestId: string, label: string) => {
       const { data: r } = await admin
         .from('requests')
-        .select('price_estimate, partner_amount, commission_amount, payment_processing_cost')
+        .select('price_estimate, partner_amount, commission_amount, payment_processing_cost, status')
         .eq('id', requestId)
         .single();
       if (!r || r.partner_amount == null) {
@@ -1184,8 +1184,12 @@ async function main() {
         .select('amount, entry_type')
         .eq('request_id', requestId);
       const providerNet = (entries ?? []).reduce((s, e) => s + money(e.amount), 0);
-      const expectedNet =
-        money(r.partner_amount) - Math.round((refunded * (money(r.partner_amount) / price)) * 100) / 100;
+      // A job that never completed was priced but never earned. Its frozen
+      // partner_amount says what WOULD have been owed, not what is: expecting
+      // a credit for work that did not happen is how a cancelled job turns
+      // into a payable.
+      const earned = r.status === 'completed' ? money(r.partner_amount) : 0;
+      const expectedNet = earned - Math.round(refunded * (earned / price) * 100) / 100;
       record(
         near(providerNet, expectedNet, 0.02) ? 'pass' : 'fail',
         `${label}: provider net after refunds`,
@@ -1207,6 +1211,7 @@ async function main() {
       const output = execFileSync('npx', ['tsx', 'scripts/verify-finance.ts'], {
         encoding: 'utf8',
         shell: process.platform === 'win32',
+        env: { ...process.env, VERIFY_FINANCE_ALLOW_ACTIVE: '1' },
       });
       const lines = output.trim().split(String.fromCharCode(10));
       const summary = lines[lines.length - 1].trim();
@@ -1255,6 +1260,13 @@ async function main() {
     if (fixtureConfigV2) {
       await admin.from('pricing_configs').update({ status: 'archived' }).eq('id', fixtureConfigV2);
     }
+
+    // Archived is not enough. A fixture version left in the table takes a
+    // version NUMBER with it, so the first real configuration would be v11 and
+    // the history would read as ten abandoned pricing decisions. They are
+    // deleted; pricing_config_audit has no foreign key precisely so the record
+    // of what happened outlives the rows it describes.
+    await admin.from('pricing_configs').delete().ilike('label', 'FIXTURE%');
 
     const { data: stillActive } = await admin.from('pricing_configs').select('id').eq('status', 'active');
     const { data: configuredNow } = await admin.rpc('pricing_configured' as never, {} as never);
