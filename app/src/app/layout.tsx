@@ -66,6 +66,10 @@ export default async function RootLayout({ children }: LayoutProps<'/'>) {
   } = await supabase.auth.getUser();
 
   let role: 'user' | 'driver' | 'admin' | null = null;
+  // Business access is a company membership, not a fourth user_role — see
+  // dashboard/business/page.tsx. The bar only needs to know whether there is
+  // one, so it can offer the link.
+  let hasCompany = false;
   if (user) {
     const { data: profile } = await supabase
       .from('profiles')
@@ -73,6 +77,15 @@ export default async function RootLayout({ children }: LayoutProps<'/'>) {
       .eq('id', user.id)
       .single();
     role = profile?.role ?? null;
+
+    const { data: membership } = await supabase
+      .from('company_members')
+      .select('id')
+      .eq('profile_id', user.id)
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle();
+    hasCompany = Boolean(membership);
   }
 
   return (
@@ -80,7 +93,7 @@ export default async function RootLayout({ children }: LayoutProps<'/'>) {
       <body className="min-h-full flex flex-col bg-night text-text">
         <LanguageProvider>
           <ToastProvider>
-            <NavBar role={role} />
+            <NavBar role={role} hasCompany={hasCompany} />
             <main className="flex-1">{children}</main>
             {/* Marketing chrome, so it stops at the signed-in surfaces: a
                 driver mid-mission does not need a footer under the map. */}

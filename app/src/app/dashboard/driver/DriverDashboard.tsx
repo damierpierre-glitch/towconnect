@@ -9,6 +9,8 @@ import { Card, StatCard } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Chat } from '@/components/Chat';
+import { ProposeSupplement } from '@/components/ProposeSupplement';
+import { SupplementsPanel } from '@/components/SupplementsPanel';
 import { MapView } from '@/components/MapView';
 import { StatusTracker } from '@/components/StatusTracker';
 import { acceptRequest, advanceRequestStatus, declineRequest, toggleOnline, updateDriverInfo, updateDriverLocation } from '@/lib/actions/driver';
@@ -602,6 +604,12 @@ function ActiveMission({
       </div>
 
       <Chat requestId={active.id} currentUserId={driverId} quickMessages={DRIVER_QUICK_MESSAGES} />
+
+      {/* Extras are proposed here and charged only once the customer has
+          approved them in their own app. Nothing a driver does on this screen
+          changes what the customer owes on its own. */}
+      <SupplementsPanel requestId={active.id} role="driver" />
+      <ProposeSupplement requestId={active.id} />
     </Card>
   );
 }

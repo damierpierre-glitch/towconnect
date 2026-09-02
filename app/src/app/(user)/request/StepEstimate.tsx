@@ -10,6 +10,7 @@ import { MapView } from '@/components/MapView';
 import { distanceKm, estimateEtaMinutes, estimatePriceBreakdown } from '@/lib/pricing';
 import { STRIPE_CONFIGURED } from '@/lib/stripe/client';
 import { hasDefaultPaymentMethod } from '@/lib/actions/payments';
+import { RegulatedZoneNotice, useRegulatedZone } from '@/components/RegulatedZoneNotice';
 import type { RequestFormData } from './types';
 
 // Same escalating tiers Smart Dispatch itself uses server-side
@@ -40,6 +41,16 @@ export function StepEstimate({
   const [notFound, setNotFound] = useState(false);
   const [checkingPaymentMethod, setCheckingPaymentMethod] = useState(STRIPE_CONFIGURED);
   const [hasPaymentMethod, setHasPaymentMethod] = useState(!STRIPE_CONFIGURED);
+
+  // The regulatory check happens BEFORE the customer commits, not after.
+  // Confirming a request we are not allowed to serve would authorize a card
+  // for a job no TowConnect truck can legally take, and then explain the
+  // problem afterwards. The database is asked first.
+  const { zone, checked: zoneChecked } = useRegulatedZone(form.lat, form.lng);
+  const zoneBlocksDispatch =
+    zone !== null &&
+    (zone.dispatch_mode === 'external_authority_required' ||
+      zone.dispatch_mode === 'manual_instruction_only');
 
   async function search(cancelledRef?: { current: boolean }) {
     setLoading(true);
@@ -170,7 +181,13 @@ export function StepEstimate({
         </div>
       ) : null}
 
-      {estimate && !checkingPaymentMethod && !hasPaymentMethod ? (
+      {zone ? (
+        <div className="mb-4">
+          <RegulatedZoneNotice zone={zone} />
+        </div>
+      ) : null}
+
+      {estimate && !zoneBlocksDispatch && !checkingPaymentMethod && !hasPaymentMethod ? (
         <div className="bg-night-3 border border-orange rounded-xl p-4 mb-4 text-center">
           <p className="text-sm text-text-2 mb-3">{t('payment_method_required')}</p>
           <Link href="/payment-methods">
@@ -185,13 +202,19 @@ export function StepEstimate({
         <Button variant="secondary" onClick={onBack} className="flex-1">
           ← {t('btn_back')}
         </Button>
-        <Button
-          className="flex-[2]"
-          disabled={!estimate || confirming || checkingPaymentMethod || !hasPaymentMethod}
-          onClick={handleConfirm}
-        >
-          {confirming ? '…' : `🚨 ${t('btn_confirm_dispatch')}`}
-        </Button>
+        {/* No confirm button at all inside a zone whose rule bars us from
+            dispatching — the official instruction above is the action. A
+            disabled button would still suggest this is something TowConnect
+            could do for you if you tried again. */}
+        {!zoneBlocksDispatch ? (
+          <Button
+            className="flex-[2]"
+            disabled={!estimate || confirming || !zoneChecked || checkingPaymentMethod || !hasPaymentMethod}
+            onClick={handleConfirm}
+          >
+            {confirming ? '…' : `🚨 ${t('btn_confirm_dispatch')}`}
+          </Button>
+        ) : null}
       </div>
     </Card>
   );

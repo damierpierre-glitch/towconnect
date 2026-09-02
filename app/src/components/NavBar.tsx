@@ -10,6 +10,7 @@ import type { UserRole } from '@/lib/supabase/types';
 
 interface NavBarProps {
   role: UserRole | null;
+  hasCompany?: boolean;
 }
 
 const tabsByRole: Record<UserRole, { href: string; key: 'nav_user' | 'nav_driver' | 'nav_admin'; icon: string }> = {
@@ -36,6 +37,19 @@ const userSubLinks: SubLink[] = [
 // acceptable for the exact audience this phase targets: someone in a truck,
 // on a phone, one hand free. This list is what both the desktop bar and the
 // mobile menu below render from, so the two never drift apart.
+// Added in Phase 6. Rendered only for a user who actually belongs to a
+// company, so a solo driver's bar is unchanged.
+const businessLink: SubLink = {
+  href: '/dashboard/business',
+  icon: '🏢',
+  fr: 'Entreprise',
+  en: 'Business',
+};
+
+const adminSubLinks: SubLink[] = [
+  { href: '/dashboard/admin/zones', icon: '⚠️', fr: 'Zones', en: 'Zones' },
+];
+
 const driverSubLinks: SubLink[] = [
   { href: '/dashboard/driver/profile', icon: '🪪', fr: 'Profil', en: 'Profile' },
   { href: '/dashboard/driver/documents', icon: '📄', fr: 'Documents', en: 'Documents' },
@@ -44,11 +58,13 @@ const driverSubLinks: SubLink[] = [
   { href: '/dashboard/driver/performance', icon: '📈', fr: 'Performance', en: 'Performance' },
 ];
 
-export function NavBar({ role }: NavBarProps) {
+export function NavBar({ role, hasCompany = false }: NavBarProps) {
   const { t, lang, toggleLang } = useLanguage();
   const pathname = usePathname();
   const tab = role ? tabsByRole[role] : null;
-  const subLinks = role === 'user' ? userSubLinks : role === 'driver' ? driverSubLinks : [];
+  const baseSubLinks =
+    role === 'user' ? userSubLinks : role === 'driver' ? driverSubLinks : role === 'admin' ? adminSubLinks : [];
+  const subLinks = hasCompany ? [...baseSubLinks, businessLink] : baseSubLinks;
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (

@@ -1888,6 +1888,776 @@ async function run(): Promise<Result[]> {
 
       await admin.from('requests').delete().in('id', [declinedRequestId, expiredRequestId]);
     }
+
+    // ================================================================
+    // PHASE 6 — regulated zones, companies, fleet, Smart Dispatch V2
+    //
+    // Everything created here is torn down at the end of the block. The
+    // regulated zone in particular is ACTIVE while these assertions run, so
+    // it is placed at 51.0 / -68.0 — uninhabited northern Québec, hundreds of
+    // kilometres from anywhere the product is used — and deleted immediately
+    // afterwards. An active test zone sitting over a real city would refuse
+    // service to real people.
+    // ================================================================
+    {
+      const ZONE_LAT = 51.0;
+      const ZONE_LNG = -68.0;
+
+      // ---- two companies, deliberately unrelated ----
+      const ownerA = await createTestUser('user');
+      createdUserIds.push(ownerA.id);
+      const dispatcherA = await createTestUser('user');
+      createdUserIds.push(dispatcherA.id);
+      const driverA = await createTestUser('driver');
+      createdUserIds.push(driverA.id);
+
+      const ownerB = await createTestUser('user');
+      createdUserIds.push(ownerB.id);
+      const driverB = await createTestUser('driver');
+      createdUserIds.push(driverB.id);
+
+      const rider = await createTestUser('user');
+      createdUserIds.push(rider.id);
+
+      const { data: companyRows, error: companyError } = await admin
+        .from('companies')
+        .insert([
+          { name: 'RLS Test Towing A', owner_id: ownerA.id, status: 'active', province: 'QC' },
+          { name: 'RLS Test Towing B', owner_id: ownerB.id, status: 'active', province: 'QC' },
+        ])
+        .select('id, name');
+      const companyA = companyRows?.find((c) => c.name.endsWith('A'))?.id as string;
+      const companyB = companyRows?.find((c) => c.name.endsWith('B'))?.id as string;
+      results.push({
+        name: 'setup: two test companies exist',
+        pass: Boolean(companyA && companyB),
+        detail: companyError?.message,
+      });
+
+      await admin.from('company_members').insert([
+        { company_id: companyA, profile_id: ownerA.id, role: 'owner', status: 'active' },
+        { company_id: companyA, profile_id: dispatcherA.id, role: 'dispatcher', status: 'active' },
+        { company_id: companyA, profile_id: driverA.id, role: 'driver', status: 'active' },
+        { company_id: companyB, profile_id: ownerB.id, role: 'owner', status: 'active' },
+        { company_id: companyB, profile_id: driverB.id, role: 'driver', status: 'active' },
+      ]);
+
+      const { data: vehicles } = await admin
+        .from('fleet_vehicles')
+        .insert([
+          { company_id: companyA, label: 'A-flatbed', truck_type: 'flatbed', capabilities: ['flatbed'] },
+          { company_id: companyB, label: 'B-flatbed', truck_type: 'flatbed', capabilities: ['flatbed'] },
+        ])
+        .select('id, label');
+      const vehicleA = vehicles?.find((v) => v.label === 'A-flatbed')?.id as string;
+      const vehicleB = vehicles?.find((v) => v.label === 'B-flatbed')?.id as string;
+
+      await admin
+        .from('driver_vehicle_assignments')
+        .insert([
+          { fleet_vehicle_id: vehicleA, driver_id: driverA.id, active: true },
+          { fleet_vehicle_id: vehicleB, driver_id: driverB.id, active: true },
+        ]);
+
+      // ---- 1. company A never reads company B ----
+      const { data: aReadsB } = await ownerA.client
+        .from('companies')
+        .select('id, name')
+        .eq('id', companyB)
+        .maybeSingle();
+      results.push({
+        name: "company A's owner cannot read company B",
+        pass: aReadsB == null,
+        detail: aReadsB ? `leaked ${JSON.stringify(aReadsB)}` : undefined,
+      });
+
+      const { data: aReadsBRoster } = await ownerA.client
+        .from('company_members')
+        .select('id')
+        .eq('company_id', companyB);
+      results.push({
+        name: "company A's owner cannot read company B's roster",
+        pass: (aReadsBRoster ?? []).length === 0,
+        detail: `${(aReadsBRoster ?? []).length} member row(s) visible`,
+      });
+
+      // ---- 2. driver A never reads fleet B ----
+      const { data: driverAReadsFleetB } = await driverA.client
+        .from('fleet_vehicles')
+        .select('id')
+        .eq('company_id', companyB);
+      results.push({
+        name: "a driver cannot read another company's fleet",
+        pass: (driverAReadsFleetB ?? []).length === 0,
+        detail: `${(driverAReadsFleetB ?? []).length} vehicle(s) visible`,
+      });
+
+      const { data: driverAReadsOwnFleet } = await driverA.client
+        .from('fleet_vehicles')
+        .select('id')
+        .eq('company_id', companyA);
+      results.push({
+        name: "a driver can read their own company's fleet",
+        pass: (driverAReadsOwnFleet ?? []).length === 1,
+        detail: `${(driverAReadsOwnFleet ?? []).length} vehicle(s) visible, expected 1`,
+      });
+
+      // ---- 3. a driver cannot attach themself to a foreign company ----
+      const { error: selfJoinError } = await driverA.client
+        .from('company_members')
+        .insert({ company_id: companyB, profile_id: driverA.id, role: 'driver', status: 'active' });
+      const { data: selfJoinRow } = await admin
+        .from('company_members')
+        .select('id')
+        .eq('company_id', companyB)
+        .eq('profile_id', driverA.id)
+        .maybeSingle();
+      results.push({
+        name: 'a driver cannot add themself to another company',
+        pass: Boolean(selfJoinError) && selfJoinRow == null,
+        detail: selfJoinRow ? 'the membership row was created!' : undefined,
+      });
+
+      // ...nor to their own, which is equally a staffing decision.
+      const { error: selfPromoteError } = await driverA.client
+        .from('company_members')
+        .update({ role: 'owner' })
+        .eq('company_id', companyA)
+        .eq('profile_id', driverA.id);
+      const { data: roleAfter } = await admin
+        .from('company_members')
+        .select('role')
+        .eq('company_id', companyA)
+        .eq('profile_id', driverA.id)
+        .single();
+      results.push({
+        name: 'a driver cannot promote themself inside their own company',
+        pass: roleAfter?.role === 'driver',
+        detail: selfPromoteError ? undefined : `role is now '${roleAfter?.role}'`,
+      });
+
+      // ---- a driver cannot put themself behind another company's truck ----
+      const { error: selfAssignError } = await driverA.client
+        .from('driver_vehicle_assignments')
+        .insert({ fleet_vehicle_id: vehicleB, driver_id: driverA.id, active: true });
+      const { data: selfAssignRow } = await admin
+        .from('driver_vehicle_assignments')
+        .select('id')
+        .eq('fleet_vehicle_id', vehicleB)
+        .eq('driver_id', driverA.id)
+        .maybeSingle();
+      results.push({
+        name: "a driver cannot assign themself to another company's vehicle",
+        pass: Boolean(selfAssignError) && selfAssignRow == null,
+        detail: selfAssignRow ? 'the assignment row was created!' : undefined,
+      });
+
+      // Even the service role cannot create a cross-company pairing — that
+      // invariant is a trigger, not a policy, precisely so it holds for
+      // trusted code paths too.
+      const { error: crossCompanyError } = await admin
+        .from('driver_vehicle_assignments')
+        .insert({ fleet_vehicle_id: vehicleB, driver_id: driverA.id, active: true });
+      results.push({
+        name: 'even the service role cannot pair a driver with another company truck',
+        pass: Boolean(crossCompanyError),
+        detail: crossCompanyError ? undefined : 'the cross-company assignment was accepted!',
+      });
+
+      // ---- 5. a customer sees no company internals ----
+      const { data: riderReadsMembers } = await rider.client.from('company_members').select('id');
+      const { data: riderReadsFleet } = await rider.client.from('fleet_vehicles').select('id');
+      const { data: riderReadsCompanies } = await rider.client.from('companies').select('id');
+      results.push({
+        name: 'a customer sees no company roster, fleet or company row',
+        pass:
+          (riderReadsMembers ?? []).length === 0 &&
+          (riderReadsFleet ?? []).length === 0 &&
+          (riderReadsCompanies ?? []).length === 0,
+        detail:
+          `members=${(riderReadsMembers ?? []).length} fleet=${(riderReadsFleet ?? []).length} ` +
+          `companies=${(riderReadsCompanies ?? []).length}`,
+      });
+
+      // ---- 6. a dispatcher sees their company and only their company ----
+      const { data: dispatcherSees } = await dispatcherA.client.from('company_members').select('company_id');
+      const dispatcherCompanies = new Set((dispatcherSees ?? []).map((m) => m.company_id));
+      results.push({
+        name: 'a dispatcher sees exactly one company roster — their own',
+        pass: dispatcherCompanies.size === 1 && dispatcherCompanies.has(companyA),
+        detail: `saw ${[...dispatcherCompanies].length} company/companies`,
+      });
+
+      const { data: dispatcherFleet } = await dispatcherA.client.from('fleet_vehicles').select('company_id');
+      results.push({
+        name: "a dispatcher sees only their own company's fleet",
+        pass:
+          (dispatcherFleet ?? []).length === 1 && (dispatcherFleet ?? [])[0]?.company_id === companyA,
+        detail: `${(dispatcherFleet ?? []).length} vehicle(s) visible`,
+      });
+
+      // ================================================================
+      // REGULATED ZONE
+      // ================================================================
+      const zonePolygon =
+        'SRID=4326;MULTIPOLYGON(((-68.1 50.9, -67.9 50.9, -67.9 51.1, -68.1 51.1, -68.1 50.9)))';
+
+      const { data: zoneRow, error: zoneError } = await admin
+        .from('regulated_towing_zones')
+        .insert({
+          province: 'QC',
+          jurisdiction: 'RLS integration test',
+          official_name: 'RLS TEST ZONE — delete on sight',
+          restriction_type: 'exclusive_operator',
+          dispatch_mode: 'authorized_provider_only',
+          geometry: zonePolygon,
+          geometry_confidence: 'derived_from_official_text',
+          source_url: 'https://example.invalid/rls-test',
+          source_title: 'RLS integration test fixture',
+          effective_from: '2020-01-01',
+          active: true,
+          user_instruction_fr: 'Zone de test.',
+          user_instruction_en: 'Test zone.',
+        } as never)
+        .select('id')
+        .single();
+      const zoneId = zoneRow?.id as string;
+      results.push({
+        name: 'setup: an active test zone with a real geometry can be created',
+        pass: Boolean(zoneId),
+        detail: zoneError?.message,
+      });
+
+      // The anti-fabrication guard: no geometry, no activation. Ever.
+      const { error: noGeomError } = await admin
+        .from('regulated_towing_zones')
+        .insert({
+          province: 'QC',
+          jurisdiction: 'RLS integration test',
+          official_name: 'RLS TEST ZONE — no geometry',
+          restriction_type: 'other',
+          dispatch_mode: 'manual_instruction_only',
+          source_url: 'https://example.invalid/rls-test',
+          source_title: 'RLS integration test fixture',
+          effective_from: '2020-01-01',
+          active: true,
+          user_instruction_fr: 'x',
+          user_instruction_en: 'x',
+        } as never);
+      results.push({
+        name: 'a zone with no geometry cannot be activated',
+        pass: Boolean(noGeomError),
+        detail: noGeomError ? undefined : 'a geometry-less zone went active!',
+      });
+
+      // Company A is the legally authorized operator here. Company B is not.
+      await admin.from('regulated_zone_providers').insert({
+        zone_id: zoneId,
+        company_id: companyA,
+        official_operator_name: 'RLS Test Towing A',
+        authorization_status: 'authorized',
+      });
+
+      // ---- 4. a driver cannot edit their own regulatory authorization ----
+      const { error: authWriteError } = await driverA.client
+        .from('regulated_zone_providers')
+        .update({ authorization_status: 'authorized', company_id: companyB })
+        .eq('zone_id', zoneId);
+      const { data: authAfter } = await admin
+        .from('regulated_zone_providers')
+        .select('company_id, authorization_status')
+        .eq('zone_id', zoneId)
+        .single();
+      results.push({
+        name: 'a driver cannot grant or move a regulated-zone authorization',
+        pass: authAfter?.company_id === companyA && authAfter?.authorization_status === 'authorized',
+        detail: authWriteError
+          ? undefined
+          : `authorization now points at ${authAfter?.company_id}`,
+      });
+
+      const { error: selfAuthorizeError } = await ownerB.client
+        .from('regulated_zone_providers')
+        .insert({
+          zone_id: zoneId,
+          company_id: companyB,
+          official_operator_name: 'RLS Test Towing B',
+          authorization_status: 'authorized',
+        });
+      const { data: bAuthRow } = await admin
+        .from('regulated_zone_providers')
+        .select('id')
+        .eq('zone_id', zoneId)
+        .eq('company_id', companyB)
+        .maybeSingle();
+      results.push({
+        name: 'a company cannot authorize itself for a regulated zone',
+        pass: Boolean(selfAuthorizeError) && bAuthRow == null,
+        detail: bAuthRow ? 'company B authorized itself!' : undefined,
+      });
+
+      // ---- both drivers online, in the zone, freshly beating ----
+      const nowIso = new Date().toISOString();
+      await admin
+        .from('driver_profiles')
+        .update({
+          approval_status: 'approved',
+          is_online: true,
+          current_lat: ZONE_LAT,
+          current_lng: ZONE_LNG,
+          last_heartbeat_at: nowIso,
+        })
+        .in('profile_id', [driverA.id, driverB.id]);
+
+      // 'accident' requires any of flatbed / heavy_duty / recovery. Both
+      // drivers sit on a flatbed, so at this point both are COMPATIBLE and
+      // only authorization separates them.
+      const { data: zoneRequest, error: zoneRequestError } = await rider.client
+        .from('requests')
+        .insert({
+          user_id: rider.id,
+          problem_type: 'accident',
+          location_text: 'RLS test — inside regulated zone',
+          lat: ZONE_LAT,
+          lng: ZONE_LNG,
+          price_estimate: 120,
+        })
+        .select('id, regulated_zone_id, regulated_dispatch_state')
+        .single();
+      const zoneRequestId = zoneRequest?.id as string;
+
+      results.push({
+        name: 'a request inside a regulated zone is stamped with that zone on insert',
+        pass: zoneRequest?.regulated_zone_id === zoneId,
+        detail: zoneRequestError?.message ?? `stamped ${zoneRequest?.regulated_zone_id}`,
+      });
+
+      const candidates = async (id: string) => {
+        const { data } = await admin.rpc('dispatch_candidates' as never, {
+          p_request_id: id,
+          p_radius_km: 40,
+        } as never);
+        return (data ?? []) as {
+          driver_id: string;
+          eligible: boolean;
+          exclusion_reason: string | null;
+          zone_authorized: boolean;
+          service_compatibility: string;
+        }[];
+      };
+
+      let rows = await candidates(zoneRequestId);
+      const rowA = rows.find((r) => r.driver_id === driverA.id);
+      const rowB = rows.find((r) => r.driver_id === driverB.id);
+
+      results.push({
+        name: 'setup: both test drivers are actually candidates for the zone request',
+        pass: Boolean(rowA && rowB),
+        detail: `saw ${rows.length} candidate(s) — the assertions below would pass vacuously`,
+      });
+
+      // ---- 10. authorized AND compatible → eligible ----
+      results.push({
+        name: 'an authorized, compatible driver is eligible in a regulated zone',
+        pass: rowA?.eligible === true && rowA?.zone_authorized === true,
+        detail: `eligible=${rowA?.eligible} authorized=${rowA?.zone_authorized} reason=${rowA?.exclusion_reason}`,
+      });
+
+      // ---- 8. compatible but NOT authorized → excluded ----
+      results.push({
+        name: 'a compatible but unauthorized driver is excluded from a regulated zone',
+        pass:
+          rowB?.eligible === false &&
+          rowB?.zone_authorized === false &&
+          rowB?.exclusion_reason === 'regulated_zone_not_authorized',
+        detail: `eligible=${rowB?.eligible} reason=${rowB?.exclusion_reason} compat=${rowB?.service_compatibility}`,
+      });
+
+      // ---- 11. a commercial preference never overrides the law ----
+      await admin.from('dispatch_partner_preferences').insert({
+        company_id: companyB,
+        head_start_seconds: 60,
+        active: true,
+      } as never);
+
+      rows = await candidates(zoneRequestId);
+      const rowBPreferred = rows.find((r) => r.driver_id === driverB.id);
+      results.push({
+        name: 'a preferred partner is still excluded when it is not authorized for the zone',
+        pass:
+          rowBPreferred?.eligible === false &&
+          rowBPreferred?.exclusion_reason === 'regulated_zone_not_authorized',
+        detail: `eligible=${rowBPreferred?.eligible} reason=${rowBPreferred?.exclusion_reason}`,
+      });
+
+      // And dispatch itself must not hand the job to the preferred partner.
+      const { data: offer } = await admin.rpc('dispatch_next_candidate', {
+        p_request_id: zoneRequestId,
+      });
+      results.push({
+        name: 'dispatch offers the regulated zone job to the authorized driver, not the preferred one',
+        pass: (offer as { driver_id?: string } | null)?.driver_id === driverA.id,
+        detail: `offered to ${(offer as { driver_id?: string } | null)?.driver_id ?? 'nobody'}`,
+      });
+
+      // ---- 9. authorized but INCOMPATIBLE → excluded ----
+      // Same driver, same zone, same authorization — only the truck changes.
+      await admin.from('driver_vehicle_assignments').update({ active: false }).eq('driver_id', driverA.id);
+      await admin.from('fleet_vehicles').update({ capabilities: ['boost'] }).eq('id', vehicleA);
+      await admin
+        .from('driver_vehicle_assignments')
+        .insert({ fleet_vehicle_id: vehicleA, driver_id: driverA.id, active: true });
+
+      const { data: incompatRequest } = await rider.client
+        .from('requests')
+        .insert({
+          user_id: rider.id,
+          problem_type: 'accident',
+          location_text: 'RLS test — authorized but wrong truck',
+          lat: ZONE_LAT,
+          lng: ZONE_LNG,
+          price_estimate: 120,
+        })
+        .select('id')
+        .single();
+      const incompatRequestId = incompatRequest?.id as string;
+
+      const incompatRows = await candidates(incompatRequestId);
+      const incompatA = incompatRows.find((r) => r.driver_id === driverA.id);
+      results.push({
+        name: 'an authorized driver with the wrong equipment is excluded',
+        pass:
+          incompatA?.zone_authorized === true &&
+          incompatA?.service_compatibility === 'incompatible' &&
+          incompatA?.eligible === false &&
+          incompatA?.exclusion_reason === 'service_not_compatible',
+        detail: `authorized=${incompatA?.zone_authorized} compat=${incompatA?.service_compatibility} reason=${incompatA?.exclusion_reason}`,
+      });
+
+      // ---- 7. a zone that bars dispatch entirely produces no offer ----
+      await admin
+        .from('regulated_towing_zones')
+        .update({ dispatch_mode: 'external_authority_required' })
+        .eq('id', zoneId);
+
+      const { data: authorityRequest } = await rider.client
+        .from('requests')
+        .insert({
+          user_id: rider.id,
+          problem_type: 'accident',
+          location_text: 'RLS test — external authority zone',
+          lat: ZONE_LAT,
+          lng: ZONE_LNG,
+          price_estimate: 120,
+        })
+        .select('id, regulated_dispatch_state')
+        .single();
+      const authorityRequestId = authorityRequest?.id as string;
+
+      results.push({
+        name: 'a request in an external-authority zone is marked awaiting_external_authority on insert',
+        pass: authorityRequest?.regulated_dispatch_state === 'awaiting_external_authority',
+        detail: `state=${authorityRequest?.regulated_dispatch_state}`,
+      });
+
+      const { data: authorityOffer } = await admin.rpc('dispatch_next_candidate', {
+        p_request_id: authorityRequestId,
+      });
+      const { data: authorityAfter } = await admin
+        .from('requests')
+        .select('driver_id, regulated_dispatch_state')
+        .eq('id', authorityRequestId)
+        .single();
+      // A composite-returning Postgres function hands back a row of NULLs,
+      // not SQL NULL, when it returns nothing — so `id` is what says "no
+      // offer was made", not the row being absent. driver_id staying null is
+      // the independent confirmation.
+      const authorityOfferId = (authorityOffer as { id?: string | null } | null)?.id ?? null;
+      results.push({
+        name: 'dispatch never offers a job inside an external-authority zone',
+        pass: authorityOfferId == null && authorityAfter?.driver_id == null,
+        detail: `offer_id=${authorityOfferId} driver=${authorityAfter?.driver_id}`,
+      });
+
+      // ---- outside the zone, nothing changes ----
+      const { data: outsideRequest } = await rider.client
+        .from('requests')
+        .insert({
+          user_id: rider.id,
+          problem_type: 'accident',
+          location_text: 'RLS test — outside every zone',
+          lat: 48.0,
+          lng: -71.0,
+          price_estimate: 120,
+        })
+        .select('id, regulated_zone_id, regulated_dispatch_state')
+        .single();
+      results.push({
+        name: 'a request outside every regulated zone is untouched by the zone engine',
+        pass:
+          outsideRequest?.regulated_zone_id == null &&
+          outsideRequest?.regulated_dispatch_state === 'not_applicable',
+        detail: `zone=${outsideRequest?.regulated_zone_id} state=${outsideRequest?.regulated_dispatch_state}`,
+      });
+
+      // ---- document compliance blocks dispatch when configured ----
+      await admin
+        .from('regulated_towing_zones')
+        .update({ dispatch_mode: 'authorized_provider_only' })
+        .eq('id', zoneId);
+      await admin.from('fleet_vehicles').update({ capabilities: ['flatbed'] }).eq('id', vehicleA);
+      await admin
+        .from('driver_profiles')
+        .update({ province: 'ZZ' })
+        .eq('profile_id', driverA.id);
+
+      const { data: requirementRow } = await admin
+        .from('document_requirements')
+        .insert({
+          province: 'ZZ',
+          document_type: 'insurance',
+          required: true,
+          blocks_online: true,
+          blocks_dispatch: true,
+          active: true,
+          notes: 'RLS integration test fixture',
+        } as never)
+        .select('id')
+        .single();
+
+      const { data: blockedFlag } = await admin.rpc('driver_dispatch_blocked' as never, {
+        p_driver_id: driverA.id,
+      } as never);
+      results.push({
+        name: 'a required document that is missing blocks dispatch',
+        pass: blockedFlag === true,
+        detail: `driver_dispatch_blocked=${blockedFlag}`,
+      });
+
+      const { data: complianceRequest } = await rider.client
+        .from('requests')
+        .insert({
+          user_id: rider.id,
+          problem_type: 'accident',
+          location_text: 'RLS test — compliance block',
+          lat: ZONE_LAT,
+          lng: ZONE_LNG,
+          price_estimate: 120,
+        })
+        .select('id')
+        .single();
+      const complianceRows = await candidates(complianceRequest?.id as string);
+      const complianceA = complianceRows.find((r) => r.driver_id === driverA.id);
+      results.push({
+        name: 'a driver whose mandatory documents are missing is excluded from dispatch',
+        pass: complianceA?.eligible === false && complianceA?.exclusion_reason === 'documents_not_in_good_standing',
+        detail: `eligible=${complianceA?.eligible} reason=${complianceA?.exclusion_reason}`,
+      });
+
+      // Going online is refused too, server-side.
+      await admin.from('driver_profiles').update({ is_online: false }).eq('profile_id', driverA.id);
+      const { error: onlineError } = await driverA.client
+        .from('driver_profiles')
+        .update({ is_online: true })
+        .eq('profile_id', driverA.id);
+      const { data: onlineAfter } = await admin
+        .from('driver_profiles')
+        .select('is_online')
+        .eq('profile_id', driverA.id)
+        .single();
+      results.push({
+        name: 'a non-compliant driver cannot go online',
+        pass: Boolean(onlineError) && onlineAfter?.is_online === false,
+        detail: onlineError ? undefined : `is_online is now ${onlineAfter?.is_online}`,
+      });
+
+      // ---- supplements: only the customer approves ----
+      const { data: suppRequest } = await rider.client
+        .from('requests')
+        .insert({
+          user_id: rider.id,
+          problem_type: 'mechanical',
+          location_text: 'RLS test — supplements',
+          lat: 48.0,
+          lng: -71.0,
+          price_estimate: 100,
+        })
+        .select('id')
+        .single();
+      const suppRequestId = suppRequest?.id as string;
+      await admin
+        .from('requests')
+        .update({ driver_id: driverB.id, status: 'matched' })
+        .eq('id', suppRequestId);
+
+      const { data: supplementRow, error: supplementError } = await driverB.client
+        .from('request_supplements')
+        .insert({
+          request_id: suppRequestId,
+          type_key: 'winch',
+          amount: 45,
+          proposed_by: driverB.id,
+          status: 'proposed',
+        })
+        .select('id')
+        .single();
+      results.push({
+        name: 'the assigned driver can propose a supplement',
+        pass: Boolean(supplementRow?.id),
+        detail: supplementError?.message,
+      });
+
+      const supplementId = supplementRow?.id as string;
+      const { error: selfApproveError } = await driverB.client
+        .from('request_supplements')
+        .update({ status: 'approved' })
+        .eq('id', supplementId);
+      const { data: supplementAfterSelf } = await admin
+        .from('request_supplements')
+        .select('status')
+        .eq('id', supplementId)
+        .single();
+      results.push({
+        name: 'a driver cannot approve their own supplement',
+        pass: supplementAfterSelf?.status === 'proposed',
+        detail: selfApproveError ? undefined : `status is now '${supplementAfterSelf?.status}'`,
+      });
+
+      const { error: strangerApproveError } = await ownerB.client
+        .from('request_supplements')
+        .update({ status: 'approved' })
+        .eq('id', supplementId);
+      const { data: supplementAfterStranger } = await admin
+        .from('request_supplements')
+        .select('status')
+        .eq('id', supplementId)
+        .single();
+      results.push({
+        name: 'a third party cannot approve someone else’s supplement',
+        pass: supplementAfterStranger?.status === 'proposed',
+        detail: strangerApproveError ? undefined : `status is now '${supplementAfterStranger?.status}'`,
+      });
+
+      const { error: riderApproveError } = await rider.client
+        .from('request_supplements')
+        .update({ status: 'approved' })
+        .eq('id', supplementId);
+      const { data: supplementApproved } = await admin
+        .from('request_supplements')
+        .select('status')
+        .eq('id', supplementId)
+        .single();
+      results.push({
+        name: 'the customer can approve a supplement',
+        pass: supplementApproved?.status === 'approved',
+        detail: riderApproveError?.message,
+      });
+
+      const { error: mutateApprovedError } = await driverB.client
+        .from('request_supplements')
+        .update({ amount: 500 })
+        .eq('id', supplementId);
+      const { data: supplementAmount } = await admin
+        .from('request_supplements')
+        .select('amount')
+        .eq('id', supplementId)
+        .single();
+      results.push({
+        name: 'an approved supplement cannot be changed afterwards',
+        pass: Number(supplementAmount?.amount) === 45,
+        detail: mutateApprovedError ? undefined : `amount is now ${supplementAmount?.amount}`,
+      });
+
+      // ---- pricing: nothing is invented ----
+      const { data: pricingConfigured } = await admin.rpc('pricing_configured' as never, {} as never);
+      results.push({
+        name: 'no commission rate is configured, and the platform says so',
+        pass: pricingConfigured === false,
+        detail: `pricing_configured=${pricingConfigured}`,
+      });
+
+      const { data: compensation } = await driverB.client.rpc('request_provider_compensation' as never, {
+        p_request_id: suppRequestId,
+      } as never);
+      results.push({
+        name: 'partner compensation is null while no rate exists — never a fabricated number',
+        pass: compensation == null,
+        detail: `returned ${JSON.stringify(compensation)}`,
+      });
+
+      const { data: outsiderCompensation, error: outsiderCompError } = await ownerA.client.rpc(
+        'request_provider_compensation' as never,
+        { p_request_id: suppRequestId } as never
+      );
+      results.push({
+        name: "a third party cannot read a request's economics",
+        pass: Boolean(outsiderCompError) || outsiderCompensation == null,
+        detail: `returned ${JSON.stringify(outsiderCompensation)}`,
+      });
+
+      // ---- the audit trail cannot be erased ----
+      const { data: auditBefore } = await admin
+        .from('regulated_zone_audit' as never)
+        .select('id')
+        .eq('row_id', zoneId);
+      const adminUser2 = await createTestUser('user');
+      createdUserIds.push(adminUser2.id);
+      await admin.from('profiles').update({ role: 'admin' }).eq('id', adminUser2.id);
+      const { error: auditDeleteError } = await adminUser2.client
+        .from('regulated_zone_audit' as never)
+        .delete()
+        .eq('row_id', zoneId);
+      const { data: auditAfter } = await admin
+        .from('regulated_zone_audit' as never)
+        .select('id')
+        .eq('row_id', zoneId);
+      results.push({
+        name: 'not even an admin can delete a regulated-zone audit entry',
+        pass: (auditAfter ?? []).length === (auditBefore ?? []).length && (auditBefore ?? []).length > 0,
+        detail: auditDeleteError
+          ? undefined
+          : `audit rows went from ${(auditBefore ?? []).length} to ${(auditAfter ?? []).length}`,
+      });
+
+      // ---- explain view is admin-only ----
+      const { error: explainDeniedError } = await driverA.client.rpc('explain_dispatch_candidates', {
+        p_request_id: zoneRequestId,
+      });
+      results.push({
+        name: 'a driver cannot read the dispatch explain view',
+        pass: Boolean(explainDeniedError),
+        detail: explainDeniedError ? undefined : 'the explain view was readable by a driver!',
+      });
+
+      // ================================================================
+      // TEARDOWN — the active test zone must not outlive this run.
+      // ================================================================
+      await admin.from('requests').delete().eq('user_id', rider.id);
+      if (requirementRow?.id) {
+        await admin.from('document_requirements').delete().eq('id', requirementRow.id);
+      }
+      await admin.from('dispatch_partner_preferences').delete().eq('company_id', companyB);
+      await admin.from('regulated_zone_providers').delete().eq('zone_id', zoneId);
+      await admin.from('regulated_towing_zones').delete().eq('id', zoneId);
+      await admin
+        .from('regulated_towing_zones')
+        .delete()
+        .eq('official_name', 'RLS TEST ZONE — no geometry');
+      await admin.from('driver_vehicle_assignments').delete().in('fleet_vehicle_id', [vehicleA, vehicleB]);
+      await admin.from('fleet_vehicles').delete().in('id', [vehicleA, vehicleB]);
+      await admin.from('company_members').delete().in('company_id', [companyA, companyB]);
+      await admin.from('companies').delete().in('id', [companyA, companyB]);
+
+      const { data: leftoverZones } = await admin
+        .from('regulated_towing_zones')
+        .select('id')
+        .eq('jurisdiction', 'RLS integration test');
+      results.push({
+        name: 'teardown: no test zone is left active in the database',
+        pass: (leftoverZones ?? []).length === 0,
+        detail: `${(leftoverZones ?? []).length} test zone(s) still present`,
+      });
+    }
   } finally {
     for (const id of createdUserIds) {
       await deleteTestUser(id);

@@ -12,7 +12,9 @@ import { Button } from '@/components/ui/Button';
 import { MapView } from '@/components/MapView';
 import { StatusTracker } from '@/components/StatusTracker';
 import { Chat } from '@/components/Chat';
-import type { RequestStatus } from '@/lib/supabase/types';
+import { RegulatedZoneNotice, RestrictedCapacityNotice, useRegulatedZone } from '@/components/RegulatedZoneNotice';
+import { SupplementsPanel } from '@/components/SupplementsPanel';
+import type { RegulatedDispatchState, RequestStatus } from '@/lib/supabase/types';
 
 interface DriverInfo {
   name: string;
@@ -53,6 +55,10 @@ export function StepTracking({
   const [status, setStatus] = useState<RequestStatus>('pending');
   const [price, setPrice] = useState(0);
   const [driverId, setDriverId] = useState<string | null>(null);
+  // Written by dispatch (0026), never by this screen. 'restricted_capacity_wait'
+  // means the zone's authorized providers are all busy, which is a different
+  // thing from "no trucks nearby" and is said differently.
+  const [regulatedState, setRegulatedState] = useState<RegulatedDispatchState>('not_applicable');
   const [driver, setDriver] = useState<DriverInfo | null>(null);
   const [takingLonger, setTakingLonger] = useState(false);
 
@@ -62,13 +68,14 @@ export function StepTracking({
     async function loadInitial() {
       const { data } = await supabase
         .from('requests')
-        .select('status, price_estimate, driver_id')
+        .select('status, price_estimate, driver_id, regulated_dispatch_state')
         .eq('id', requestId)
         .single();
       if (data) {
         setStatus(data.status);
         setPrice(toMoney(data.price_estimate));
         setDriverId(data.driver_id);
+        setRegulatedState(data.regulated_dispatch_state);
       }
     }
     loadInitial();
@@ -79,10 +86,16 @@ export function StepTracking({
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'requests', filter: `id=eq.${requestId}` },
         (payload) => {
-          const row = payload.new as { status: RequestStatus; price_estimate: number | string; driver_id: string | null };
+          const row = payload.new as {
+            status: RequestStatus;
+            price_estimate: number | string;
+            driver_id: string | null;
+            regulated_dispatch_state: RegulatedDispatchState;
+          };
           setStatus(row.status);
           setPrice(toMoney(row.price_estimate));
           setDriverId(row.driver_id);
+          setRegulatedState(row.regulated_dispatch_state ?? 'not_applicable');
         }
       )
       .subscribe();
@@ -189,6 +202,11 @@ export function StepTracking({
     };
   }, [driverId, status]);
 
+  // The zone rule for where the customer actually is, and the state
+  // dispatch recorded for this request. Both come from the database: the
+  // screen never decides on its own that a zone applies.
+  const { zone } = useRegulatedZone(userLocation.lat, userLocation.lng);
+
   const labels: Record<RequestStatus, string> = {
     pending: t('track_pending'),
     matched: t('track_matched'),
@@ -222,6 +240,38 @@ export function StepTracking({
   // the client only ever sees these two plain-language states, never
   // dispatch internals (offer ids, candidate rank, timeouts).
   if (status === 'pending') {
+    // Inside a zone whose rule bars TowConnect from dispatching, "searching"
+    // would be a lie: nothing is searching, and nothing will arrive. Show the
+    // official instruction instead. This also covers the case where a zone
+    // was activated after the request was created — dispatch re-evaluates
+    // the rule live (0026) and this screen follows it.
+    if (zone && (zone.dispatch_mode === 'external_authority_required' || zone.dispatch_mode === 'manual_instruction_only')) {
+      return (
+        <Card>
+          <RegulatedZoneNotice zone={zone} />
+          <Button variant="secondary" full className="mt-5" onClick={handleCancel}>
+            ❌ {t('btn_cancel')}
+          </Button>
+        </Card>
+      );
+    }
+
+    if (regulatedState === 'restricted_capacity_wait') {
+      return (
+        <Card>
+          <RestrictedCapacityNotice />
+          {zone ? (
+            <div className="mt-4">
+              <RegulatedZoneNotice zone={zone} compact />
+            </div>
+          ) : null}
+          <Button variant="secondary" full className="mt-5" onClick={handleCancel}>
+            ❌ {t('btn_cancel')}
+          </Button>
+        </Card>
+      );
+    }
+
     return (
       <Card className="text-center py-10">
         {driverId ? (
@@ -317,6 +367,11 @@ export function StepTracking({
           <Chat requestId={requestId} currentUserId={userId} quickMessages={CLIENT_QUICK_MESSAGES} />
         </div>
       ) : null}
+
+      {/* Any supplement the driver proposes appears here, unapproved, with
+          the customer holding the only accept button. Nothing is added to
+          what they pay until they press it. */}
+      <SupplementsPanel requestId={requestId} role="customer" />
 
       <div className="grid grid-cols-2 gap-3 mb-5">
         <div className="text-center">

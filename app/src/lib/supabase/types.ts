@@ -72,12 +72,258 @@ export type DriverDocument = {
   reviewed_by: string | null;
 };
 
-// Prep-only (0020_companies_prep.sql) — no UI reads or writes this yet.
+export type CompanyStatus = 'pending' | 'active' | 'suspended' | 'rejected';
+
 export type Company = {
   id: string;
+  // Legal / registered name.
   name: string;
+  // What customers see. Falls back to `name` when null.
+  display_name: string | null;
   owner_id: string;
+  status: CompanyStatus;
+  phone: string | null;
+  email: string | null;
+  province: string | null;
+  address: string | null;
   created_at: string;
+  updated_at: string;
+};
+
+export type CompanyMemberRole = 'owner' | 'admin' | 'dispatcher' | 'driver';
+export type CompanyMemberStatus = 'invited' | 'active' | 'removed';
+
+// Source of truth for who belongs to a company (0024). driver_profiles.
+// company_id is a derived mirror of the role='driver' rows.
+export type CompanyMember = {
+  id: string;
+  company_id: string;
+  profile_id: string;
+  role: CompanyMemberRole;
+  status: CompanyMemberStatus;
+  invited_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// Physical equipment, not marketing. Dispatch maps a problem type onto these
+// through service_type_requirements rather than hard-coding the link.
+export type ServiceCapability =
+  | 'flatbed'
+  | 'wheel_lift'
+  | 'heavy_duty'
+  | 'winch'
+  | 'boost'
+  | 'lockout'
+  | 'tire_change'
+  | 'fuel_delivery'
+  | 'recovery';
+
+export type FleetVehicleStatus = 'active' | 'inactive' | 'maintenance';
+
+export type FleetVehicle = {
+  id: string;
+  company_id: string;
+  label: string | null;
+  truck_type: VehicleType;
+  plate: string | null;
+  province: string | null;
+  status: FleetVehicleStatus;
+  // Empty means "not declared", which dispatch treats as unknown - never as
+  // incapable. See 0026.
+  capabilities: ServiceCapability[];
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// Only a company manager can create these - there is no self-assignment path
+// at all, and a trigger additionally refuses any cross-company pairing.
+export type DriverVehicleAssignment = {
+  id: string;
+  fleet_vehicle_id: string;
+  driver_id: string;
+  assigned_by: string | null;
+  active: boolean;
+  created_at: string;
+  ended_at: string | null;
+};
+
+export type ServiceAreaKind = 'radius' | 'polygon';
+
+export type CompanyServiceArea = {
+  id: string;
+  company_id: string;
+  name: string;
+  kind: ServiceAreaKind;
+  center_lat: number | null;
+  center_lng: number | null;
+  radius_km: number | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ServiceTypeRequirement = {
+  problem_type: string;
+  any_of_capabilities: ServiceCapability[];
+  all_of_capabilities: ServiceCapability[];
+  active: boolean;
+  notes: string | null;
+  updated_at: string;
+};
+
+// ------------------------------------------------------ Phase 6: regulated
+// zones. A zone is published law with a source and a verification date, not
+// a TowConnect setting.
+export type ZoneRestrictionType =
+  | 'exclusive_operator'
+  | 'authorized_list'
+  | 'permit_required'
+  | 'municipal_restriction'
+  | 'other';
+
+export type ZoneDispatchMode =
+  | 'authorized_provider_only'
+  | 'external_authority_required'
+  | 'manual_instruction_only'
+  | 'restricted_network';
+
+// How much the polygon can be trusted. 'none' means there is no boundary at
+// all, and a CHECK constraint refuses to activate such a zone.
+export type ZoneGeometryConfidence =
+  | 'official_geospatial'
+  | 'derived_from_official_text'
+  | 'approximate_pending_validation'
+  | 'none';
+
+export type ZoneAuthorizationStatus =
+  | 'authorized'
+  | 'suspended'
+  | 'revoked'
+  | 'pending_verification';
+
+export type RegulatedDispatchState =
+  | 'not_applicable'
+  | 'awaiting_external_authority'
+  | 'authorized_provider_search'
+  | 'restricted_capacity_wait'
+  | 'manual_instruction';
+
+export type RegulatedTowingZone = {
+  id: string;
+  country: string;
+  province: string;
+  jurisdiction: string;
+  official_name: string;
+  zone_code: string | null;
+  restriction_type: ZoneRestrictionType;
+  dispatch_mode: ZoneDispatchMode;
+  geometry_confidence: ZoneGeometryConfidence;
+  geometry_note: string | null;
+  source_url: string;
+  source_title: string;
+  effective_from: string;
+  effective_to: string | null;
+  last_verified_at: string;
+  active: boolean;
+  user_instruction_fr: string;
+  user_instruction_en: string;
+  authority_phone: string | null;
+  precedence: number;
+  created_at: string;
+  updated_at: string;
+};
+
+// An officially authorized operator for a zone. company_id is null when the
+// official source names an operator that is not a TowConnect company - the
+// fact is recorded without inventing an account for it.
+export type RegulatedZoneProvider = {
+  id: string;
+  zone_id: string;
+  company_id: string | null;
+  official_operator_name: string;
+  authorization_status: ZoneAuthorizationStatus;
+  valid_from: string | null;
+  valid_to: string | null;
+  priority: number;
+  source_url: string | null;
+  source_title: string | null;
+  last_verified_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DocumentRequirement = {
+  id: string;
+  province: string | null;
+  document_type: DriverDocumentType;
+  required: boolean;
+  blocks_online: boolean;
+  blocks_dispatch: boolean;
+  requires_expiry: boolean;
+  grace_days: number;
+  source_url: string | null;
+  source_title: string | null;
+  last_verified_at: string | null;
+  active: boolean;
+  notes: string | null;
+};
+
+export type SupplementStatus = 'proposed' | 'approved' | 'declined' | 'cancelled';
+
+export type ServiceSupplementType = {
+  key: string;
+  label_fr: string;
+  label_en: string;
+  active: boolean;
+};
+
+// Proposed by the assigned driver, approved only by the customer. An
+// approved supplement is frozen (0027).
+export type RequestSupplement = {
+  id: string;
+  request_id: string;
+  type_key: string;
+  amount: number | string;
+  note: string | null;
+  status: SupplementStatus;
+  proposed_by: string;
+  responded_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// Every value is NULL until the business decides a commission rate. Nothing
+// in the app may substitute a number for these.
+export type PlatformPricingConfig = {
+  id: boolean;
+  commission_percent: number | string | null;
+  commission_fixed: number | string | null;
+  provider_minimum: number | string | null;
+  payment_processing_percent: number | string | null;
+  payment_processing_fixed: number | string | null;
+  updated_at: string;
+  updated_by: string | null;
+};
+
+// One row per candidate considered, with the first rule it failed. Produced
+// by the same query dispatch itself uses, so the audit view cannot disagree
+// with what dispatch actually did.
+export type DispatchCandidateExplanation = {
+  driver_id: string;
+  full_name: string;
+  distance_km: number;
+  company_id: string | null;
+  eligible: boolean;
+  exclusion_reason: string | null;
+  zone_authorized: boolean;
+  service_compatibility: 'compatible' | 'incompatible' | 'unknown' | 'not_required';
+  compliance_blocked: boolean;
+  service_area_ok: boolean;
+  preferred_partner: boolean;
+  effective_rating: number;
+  score: number;
 };
 
 export type NearbyDriverRow = {
@@ -138,6 +384,14 @@ export type TowRequest = {
   // 0012_destination_and_pricing_snapshot.sql.
   commission_amount: number | string | null;
   partner_amount: number | string | null;
+  payment_processing_cost: number | string | null;
+  // Phase 6: the regulated zone covering the pickup point, stamped by a
+  // BEFORE INSERT trigger (0023) so it can never be client-supplied. Null
+  // when no active zone covers the point.
+  regulated_zone_id: string | null;
+  regulated_zone_mode: ZoneDispatchMode | null;
+  regulated_dispatch_state: RegulatedDispatchState;
+  regulated_zone_checked_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -381,6 +635,171 @@ export interface Database {
           },
         ];
       };
+      regulated_towing_zones: {
+        Row: RegulatedTowingZone;
+        // Admin-only writes (0023). The geometry column is deliberately not
+        // in the Row type: it is a PostGIS geography that PostgREST returns
+        // as an opaque hex string, and nothing in the app should be reading
+        // or round-tripping it.
+        Insert: Partial<RegulatedTowingZone>;
+        Update: Partial<RegulatedTowingZone>;
+        Relationships: [];
+      };
+      regulated_zone_providers: {
+        Row: RegulatedZoneProvider;
+        Insert: Partial<RegulatedZoneProvider> & { zone_id: string; official_operator_name: string };
+        Update: Partial<RegulatedZoneProvider>;
+        Relationships: [
+          {
+            foreignKeyName: 'regulated_zone_providers_zone_id_fkey';
+            columns: ['zone_id'];
+            isOneToOne: false;
+            referencedRelation: 'regulated_towing_zones';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      company_members: {
+        Row: CompanyMember;
+        Insert: Partial<CompanyMember> & { company_id: string; profile_id: string; role: CompanyMemberRole };
+        Update: Partial<CompanyMember>;
+        Relationships: [
+          {
+            foreignKeyName: 'company_members_company_id_fkey';
+            columns: ['company_id'];
+            isOneToOne: false;
+            referencedRelation: 'companies';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'company_members_profile_id_fkey';
+            columns: ['profile_id'];
+            isOneToOne: false;
+            referencedRelation: 'profiles';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      fleet_vehicles: {
+        Row: FleetVehicle;
+        Insert: Partial<FleetVehicle> & { company_id: string };
+        Update: Partial<FleetVehicle>;
+        Relationships: [
+          {
+            foreignKeyName: 'fleet_vehicles_company_id_fkey';
+            columns: ['company_id'];
+            isOneToOne: false;
+            referencedRelation: 'companies';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      driver_vehicle_assignments: {
+        Row: DriverVehicleAssignment;
+        Insert: Partial<DriverVehicleAssignment> & { fleet_vehicle_id: string; driver_id: string };
+        Update: Partial<DriverVehicleAssignment>;
+        Relationships: [
+          {
+            foreignKeyName: 'driver_vehicle_assignments_fleet_vehicle_id_fkey';
+            columns: ['fleet_vehicle_id'];
+            isOneToOne: false;
+            referencedRelation: 'fleet_vehicles';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'driver_vehicle_assignments_driver_id_fkey';
+            columns: ['driver_id'];
+            isOneToOne: false;
+            referencedRelation: 'profiles';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      company_service_areas: {
+        Row: CompanyServiceArea;
+        Insert: Partial<CompanyServiceArea> & { company_id: string; name: string; kind: ServiceAreaKind };
+        Update: Partial<CompanyServiceArea>;
+        Relationships: [
+          {
+            foreignKeyName: 'company_service_areas_company_id_fkey';
+            columns: ['company_id'];
+            isOneToOne: false;
+            referencedRelation: 'companies';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      service_type_requirements: {
+        Row: ServiceTypeRequirement;
+        Insert: Partial<ServiceTypeRequirement> & { problem_type: string };
+        Update: Partial<ServiceTypeRequirement>;
+        Relationships: [];
+      };
+      document_requirements: {
+        Row: DocumentRequirement;
+        Insert: Partial<DocumentRequirement> & { document_type: DriverDocumentType };
+        Update: Partial<DocumentRequirement>;
+        Relationships: [];
+      };
+      service_supplement_types: {
+        Row: ServiceSupplementType;
+        Insert: Partial<ServiceSupplementType> & { key: string; label_fr: string; label_en: string };
+        Update: Partial<ServiceSupplementType>;
+        Relationships: [];
+      };
+      request_supplements: {
+        Row: RequestSupplement;
+        Insert: Partial<RequestSupplement> & {
+          request_id: string;
+          type_key: string;
+          amount: number;
+          proposed_by: string;
+        };
+        Update: Partial<RequestSupplement>;
+        Relationships: [
+          {
+            foreignKeyName: 'request_supplements_request_id_fkey';
+            columns: ['request_id'];
+            isOneToOne: false;
+            referencedRelation: 'requests';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      platform_pricing_config: {
+        Row: PlatformPricingConfig;
+        Insert: Partial<PlatformPricingConfig>;
+        Update: Partial<PlatformPricingConfig>;
+        Relationships: [];
+      };
+      pricing_rules: {
+        Row: {
+          id: string;
+          name: string;
+          target: 'customer_price' | 'provider_compensation' | 'towconnect_margin' | 'payment_processing';
+          component: 'base_fee' | 'per_km' | 'minimum' | 'percentage' | 'fixed_amount' | 'cap';
+          amount: number | string | null;
+          percent: number | string | null;
+          province: string | null;
+          regulated_zone_id: string | null;
+          company_id: string | null;
+          problem_type: string | null;
+          required_capability: ServiceCapability | null;
+          day_of_week: number | null;
+          hour_from: number | null;
+          hour_to: number | null;
+          priority: number;
+          effective_from: string | null;
+          effective_to: string | null;
+          active: boolean;
+          notes: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Record<string, unknown>;
+        Update: Record<string, unknown>;
+        Relationships: [];
+      };
       companies: {
         Row: Company;
         // No insert/update/delete policy for authenticated at all — prep
@@ -398,7 +817,25 @@ export interface Database {
         ];
       };
     };
-    Views: Record<string, never>;
+    Views: {
+      request_economics: {
+        Row: {
+          request_id: string;
+          user_id: string;
+          driver_id: string | null;
+          customer_price: number | string;
+          provider_compensation: number | string | null;
+          towconnect_margin: number | string | null;
+          payment_processing_cost: number | string | null;
+          approved_supplements: number | string;
+          customer_total: number | string;
+          // 'not_configured' means no commission rate exists yet, which is a
+          // different thing from a computed zero.
+          economics_status: 'not_configured' | 'computed';
+        };
+        Relationships: [];
+      };
+    };
     Functions: {
       accept_request: {
         Args: { p_request_id: string };
@@ -424,6 +861,73 @@ export interface Database {
       nudge_dispatch: {
         Args: { p_request_id: string };
         Returns: DispatchOffer | null;
+      };
+      // Phase 6. regulated_zone_for_point returns a single zone row whose
+      // every field is null when no active zone covers the point — Postgres
+      // composite-returning functions do that rather than returning nothing,
+      // so callers must check `id`, not the row itself.
+      regulated_zone_for_point: {
+        Args: { p_lat: number; p_lng: number };
+        Returns: RegulatedTowingZone | null;
+      };
+      company_authorized_for_zone: {
+        Args: { p_company_id: string; p_zone_id: string };
+        Returns: boolean;
+      };
+      driver_company_id: {
+        Args: { p_profile_id: string };
+        Returns: string | null;
+      };
+      company_role_of: {
+        Args: { p_company_id: string; p_profile_id?: string };
+        Returns: CompanyMemberRole | null;
+      };
+      is_company_member: {
+        Args: { p_company_id: string };
+        Returns: boolean;
+      };
+      is_company_manager: {
+        Args: { p_company_id: string };
+        Returns: boolean;
+      };
+      driver_capabilities: {
+        Args: { p_driver_id: string };
+        Returns: ServiceCapability[];
+      };
+      driver_service_compatibility: {
+        Args: { p_driver_id: string; p_problem_type: string };
+        Returns: string;
+      };
+      driver_compliance_issues: {
+        Args: { p_driver_id: string };
+        Returns: {
+          document_type: DriverDocumentType;
+          reason: string;
+          blocks_online: boolean;
+          blocks_dispatch: boolean;
+        }[];
+      };
+      driver_dispatch_blocked: {
+        Args: { p_driver_id: string };
+        Returns: boolean;
+      };
+      driver_online_blocked: {
+        Args: { p_driver_id: string };
+        Returns: boolean;
+      };
+      explain_dispatch_candidates: {
+        Args: { p_request_id: string };
+        Returns: DispatchCandidateExplanation[];
+      };
+      pricing_configured: {
+        Args: Record<string, never>;
+        Returns: boolean;
+      };
+      // Returns null while no commission rate is configured. Callers must
+      // render nothing in that case — never a zero.
+      request_provider_compensation: {
+        Args: { p_request_id: string };
+        Returns: number | string | null;
       };
     };
     Enums: Record<string, never>;
