@@ -53,7 +53,16 @@ export type DriverProfile = {
   updated_at: string;
 };
 
-export type DriverDocumentType = 'license' | 'insurance' | 'registration' | 'other';
+// 'tow_certificate' added in Phase 6.1: Ontario's Towing and Storage Safety
+// and Enforcement Act, 2021 requires a tow driver certificate carried while
+// operating, and filing that under 'other' would show a driver "Other
+// document" where the law names a specific one.
+export type DriverDocumentType =
+  | 'license'
+  | 'insurance'
+  | 'registration'
+  | 'tow_certificate'
+  | 'other';
 export type DriverDocumentStatus = 'pending' | 'approved' | 'rejected' | 'expired';
 
 // Never written from the browser except a fresh, unreviewed insert — see the

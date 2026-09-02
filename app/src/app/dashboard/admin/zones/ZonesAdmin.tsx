@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { formatDate, formatDateTime } from '@/lib/formatDate';
+import { ZoneGeometryMap } from '@/components/ZoneGeometryMap';
 import {
   linkProviderToCompany,
   markZoneVerified,
@@ -119,7 +120,11 @@ export function ZonesAdmin({
 
               {!activatable ? (
                 <p className="text-xs text-yellow mb-3">{t('adm_zone_no_geometry')}</p>
-              ) : null}
+              ) : (
+                <div className="mb-4">
+                  <ZoneGeometryMap zoneId={z.id} active={z.active} />
+                </div>
+              )}
 
               <div className="flex flex-wrap gap-2 mb-4">
                 <Button

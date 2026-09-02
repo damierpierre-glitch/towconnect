@@ -2658,6 +2658,377 @@ async function run(): Promise<Result[]> {
         detail: `${(leftoverZones ?? []).length} test zone(s) still present`,
       });
     }
+
+    // ================================================================
+    // PHASE 6.1 — real regulated geometry, dispatcher visibility, and a
+    // driver history that reflects jobs actually taken.
+    //
+    // Unlike the Phase 6 block, this one creates NO zone: the fifteen Ontario
+    // zones are live production data now, so these assertions run against the
+    // real boundaries. Every coordinate below was checked against
+    // regulated_zone_for_point() on the live project before being written
+    // down, and each is the midpoint of the zone's own derived centreline.
+    // ================================================================
+    {
+      // Verified live: each of these resolves to the zone named beside it.
+      const IN_ZONE_1A = { lat: 43.72478, lng: -79.47223 };
+      const IN_ZONE_2A = { lat: 43.62594, lng: -79.69393 };
+      const MONTREAL = { lat: 45.5019, lng: -73.5674 };
+      const LONGUEUIL = { lat: 45.5312, lng: -73.5182 };
+
+      const rider = await createTestUser('user');
+      createdUserIds.push(rider.id);
+
+      // ---- the derived Ontario geometry is live and detects ----
+      const { data: onRequest, error: onError } = await rider.client
+        .from('requests')
+        .select('id, regulated_zone_id, regulated_zone_mode, regulated_dispatch_state')
+        .limit(0);
+      void onRequest;
+      void onError;
+
+      const stamp = async (point: { lat: number; lng: number }, label: string) => {
+        const { data } = await rider.client
+          .from('requests')
+          .insert({
+            user_id: rider.id,
+            problem_type: 'battery',
+            location_text: `Phase 6.1 test — ${label}`,
+            lat: point.lat,
+            lng: point.lng,
+            price_estimate: 60,
+          })
+          .select('id, regulated_zone_id, regulated_zone_mode, regulated_dispatch_state')
+          .single();
+        return data;
+      };
+
+      const inZone = await stamp(IN_ZONE_1A, 'Highway 401 inside zone 1A');
+      results.push({
+        name: 'a request on Highway 401 is stamped with a live Ontario zone',
+        pass: Boolean(inZone?.regulated_zone_id),
+        detail: `zone=${inZone?.regulated_zone_id ?? 'none'}`,
+      });
+      results.push({
+        name: 'that zone routes the motorist to the public authority rather than to dispatch',
+        pass:
+          inZone?.regulated_zone_mode === 'external_authority_required' &&
+          inZone?.regulated_dispatch_state === 'awaiting_external_authority',
+        detail: `mode=${inZone?.regulated_zone_mode} state=${inZone?.regulated_dispatch_state}`,
+      });
+
+      const inZone2 = await stamp(IN_ZONE_2A, 'Highway 401 inside zone 2A');
+      results.push({
+        name: 'a second, separate stretch of Highway 401 resolves to its own zone',
+        pass:
+          Boolean(inZone2?.regulated_zone_id) &&
+          inZone2?.regulated_zone_id !== inZone?.regulated_zone_id,
+        detail: `zone=${inZone2?.regulated_zone_id ?? 'none'}`,
+      });
+
+      // The launch area must be completely unaffected: this is the false
+      // positive that would matter most, because it is where the customers are.
+      for (const [label, point] of [
+        ['downtown Montréal', MONTREAL],
+        ['Longueuil, Rive-Sud', LONGUEUIL],
+      ] as const) {
+        const out = await stamp(point, label);
+        results.push({
+          name: `${label} is outside every regulated zone`,
+          pass: out?.regulated_zone_id === null && out?.regulated_dispatch_state === 'not_applicable',
+          detail: `zone=${out?.regulated_zone_id} state=${out?.regulated_dispatch_state}`,
+        });
+      }
+
+      // Dispatch must refuse to offer inside the live Ontario geometry.
+      const onDriver = await createTestUser('driver');
+      createdUserIds.push(onDriver.id);
+      await admin
+        .from('driver_profiles')
+        .update({
+          approval_status: 'approved',
+          is_online: true,
+          province: 'QC',
+          current_lat: IN_ZONE_1A.lat,
+          current_lng: IN_ZONE_1A.lng,
+          last_heartbeat_at: new Date().toISOString(),
+        })
+        .eq('profile_id', onDriver.id);
+
+      const { data: onOffer } = await admin.rpc('dispatch_next_candidate', {
+        p_request_id: inZone!.id,
+      });
+      const { data: onAfter } = await admin
+        .from('requests')
+        .select('driver_id')
+        .eq('id', inZone!.id)
+        .single();
+      results.push({
+        name: 'dispatch makes no offer inside a live Ontario restricted zone, even with a driver on top of it',
+        pass: (onOffer as { id?: string | null } | null)?.id == null && onAfter?.driver_id == null,
+        detail: `driver=${onAfter?.driver_id}`,
+      });
+
+      // ---- dispatcher visibility (0030) ----
+      const ownerA = await createTestUser('user');
+      createdUserIds.push(ownerA.id);
+      const dispatcherA = await createTestUser('user');
+      createdUserIds.push(dispatcherA.id);
+      const driverA = await createTestUser('driver');
+      createdUserIds.push(driverA.id);
+      const ownerB = await createTestUser('user');
+      createdUserIds.push(ownerB.id);
+      const dispatcherB = await createTestUser('user');
+      createdUserIds.push(dispatcherB.id);
+      const driverB = await createTestUser('driver');
+      createdUserIds.push(driverB.id);
+
+      const { data: coRows } = await admin
+        .from('companies')
+        .insert([
+          { name: 'RLS 6.1 Towing A', owner_id: ownerA.id, status: 'active', province: 'QC' },
+          { name: 'RLS 6.1 Towing B', owner_id: ownerB.id, status: 'active', province: 'QC' },
+        ])
+        .select('id, name');
+      const coA = coRows?.find((c) => c.name.endsWith('A'))?.id as string;
+      const coB = coRows?.find((c) => c.name.endsWith('B'))?.id as string;
+
+      await admin.from('company_members').insert([
+        { company_id: coA, profile_id: ownerA.id, role: 'owner', status: 'active' },
+        { company_id: coA, profile_id: dispatcherA.id, role: 'dispatcher', status: 'active' },
+        { company_id: coA, profile_id: driverA.id, role: 'driver', status: 'active' },
+        { company_id: coB, profile_id: ownerB.id, role: 'owner', status: 'active' },
+        { company_id: coB, profile_id: dispatcherB.id, role: 'dispatcher', status: 'active' },
+        { company_id: coB, profile_id: driverB.id, role: 'driver', status: 'active' },
+      ]);
+
+      const makeJob = async (driverId: string, label: string) => {
+        const { data } = await rider.client
+          .from('requests')
+          .insert({
+            user_id: rider.id,
+            problem_type: 'battery',
+            location_text: `Phase 6.1 — ${label}`,
+            lat: MONTREAL.lat,
+            lng: MONTREAL.lng,
+            price_estimate: 70,
+          })
+          .select('id')
+          .single();
+        await admin
+          .from('requests')
+          .update({ driver_id: driverId, status: 'matched' })
+          .eq('id', data!.id);
+        return data!.id as string;
+      };
+
+      const jobA = await makeJob(driverA.id, "company A's job");
+      const jobB = await makeJob(driverB.id, "company B's job");
+
+      const { data: dispASeesA } = await dispatcherA.client
+        .from('requests')
+        .select('id')
+        .eq('id', jobA)
+        .maybeSingle();
+      results.push({
+        name: "a dispatcher can read a job assigned to their own company's driver",
+        pass: dispASeesA?.id === jobA,
+        detail: dispASeesA ? undefined : 'the dispatcher still sees nothing — 0030 not applied?',
+      });
+
+      const { data: dispASeesB } = await dispatcherA.client
+        .from('requests')
+        .select('id')
+        .eq('id', jobB)
+        .maybeSingle();
+      results.push({
+        name: "a dispatcher cannot read another company's job",
+        pass: dispASeesB == null,
+        detail: dispASeesB ? 'cross-company job was visible!' : undefined,
+      });
+
+      const { data: dispBSeesA } = await dispatcherB.client
+        .from('requests')
+        .select('id')
+        .eq('id', jobA)
+        .maybeSingle();
+      results.push({
+        name: 'the invariant holds in the other direction too',
+        pass: dispBSeesA == null,
+        detail: dispBSeesA ? 'cross-company job was visible!' : undefined,
+      });
+
+      // The widening is deliberately narrow: a dispatcher sees the job, not
+      // the customer. Phase 5.1's profiles rule is untouched.
+      const { data: dispASeesRider } = await dispatcherA.client
+        .from('profiles')
+        .select('full_name, phone')
+        .eq('id', rider.id)
+        .maybeSingle();
+      results.push({
+        name: "a dispatcher still cannot read the customer's profile",
+        pass: dispASeesRider == null,
+        detail: dispASeesRider ? `leaked ${JSON.stringify(dispASeesRider)}` : undefined,
+      });
+
+      // And a plain driver is not a manager: no company-wide visibility.
+      const { data: driverASeesB } = await driverA.client
+        .from('requests')
+        .select('id')
+        .eq('id', jobB)
+        .maybeSingle();
+      results.push({
+        name: "a driver does not gain company-wide visibility from another company's job",
+        pass: driverASeesB == null,
+        detail: driverASeesB ? 'visible!' : undefined,
+      });
+
+      // ---- driver history reflects jobs actually taken ----
+      // Two requests for the same driver: one cancelled while it was only ever
+      // an offer, one cancelled after being accepted. Only the second is
+      // history. driver_id is identical on both, which is exactly why
+      // filtering on driver_id alone was wrong.
+      const { data: offeredOnly } = await rider.client
+        .from('requests')
+        .insert({
+          user_id: rider.id,
+          problem_type: 'battery',
+          location_text: 'Phase 6.1 — cancelled while only offered',
+          lat: MONTREAL.lat,
+          lng: MONTREAL.lng,
+          price_estimate: 55,
+        })
+        .select('id')
+        .single();
+      // Exactly what dispatch does when it makes an offer: set driver_id while
+      // the request is still 'pending'. Then the rider cancels.
+      await admin.from('requests').update({ driver_id: driverA.id }).eq('id', offeredOnly!.id);
+      await admin.from('requests').update({ status: 'cancelled' }).eq('id', offeredOnly!.id);
+
+      // requests_one_active_job_per_driver (0002) allows a driver only one
+      // request in matched/en_route/arrived/in_progress at a time, so jobA has
+      // to be closed out before this driver can accept another. Without this,
+      // the second acceptance silently did nothing and the assertion below
+      // failed for a reason that had nothing to do with history.
+      await admin.from('requests').update({ status: 'completed' }).eq('id', jobA);
+
+      const acceptedThenCancelled = await makeJob(driverA.id, 'accepted then cancelled');
+      await admin.from('requests').update({ status: 'cancelled' }).eq('id', acceptedThenCancelled);
+
+      const { data: history } = await driverA.client
+        .from('requests')
+        .select('id, request_events!inner(status)')
+        .eq('driver_id', driverA.id)
+        .eq('request_events.status', 'matched')
+        .in('status', ['completed', 'cancelled']);
+      const historyIds = (history ?? []).map((r) => r.id);
+
+      // Not a formality: if the two rows did not both carry this driver's id,
+      // the two assertions below would be comparing nothing to nothing.
+      const { data: bothRows } = await admin
+        .from('requests')
+        .select('id, driver_id, status')
+        .in('id', [offeredOnly!.id, acceptedThenCancelled]);
+      results.push({
+        name: 'setup: both requests carry the same driver_id and are cancelled, so the test is not vacuous',
+        pass:
+          (bothRows ?? []).length === 2 &&
+          (bothRows ?? []).every((r) => r.driver_id === driverA.id && r.status === 'cancelled'),
+        detail: JSON.stringify(bothRows),
+      });
+      results.push({
+        name: 'a request cancelled while it was only an offer stays out of driver history',
+        pass: !historyIds.includes(offeredOnly!.id),
+        detail: 'an offer the driver never accepted is in their history',
+      });
+      results.push({
+        name: 'a request accepted and then cancelled remains in driver history',
+        pass: historyIds.includes(acceptedThenCancelled),
+        detail: 'a job the driver actually took disappeared from their history',
+      });
+
+      // ---- Ontario document requirements ----
+      const { data: onReq } = await admin
+        .from('document_requirements')
+        .select('document_type, required, blocks_online, blocks_dispatch, source_url')
+        .eq('province', 'ON');
+      results.push({
+        name: 'Ontario document requirements are seeded from an official source',
+        pass:
+          (onReq ?? []).length === 2 &&
+          (onReq ?? []).every((r) => r.required && r.blocks_online && r.blocks_dispatch) &&
+          (onReq ?? []).every((r) => (r.source_url ?? '').startsWith('https://www.ontario.ca/')),
+        detail: JSON.stringify(onReq),
+      });
+
+      const { data: qcReq } = await admin
+        .from('document_requirements')
+        .select('id')
+        .eq('province', 'QC');
+      results.push({
+        name: 'no Quebec document requirement is invented',
+        pass: (qcReq ?? []).length === 0,
+        detail: `${(qcReq ?? []).length} Quebec rule(s) present without a verified source`,
+      });
+
+      // A Quebec driver is unaffected by the Ontario rules; an Ontario driver
+      // with nothing on file is blocked. Same driver, one column changed.
+      await admin.from('driver_profiles').update({ province: 'QC' }).eq('profile_id', driverA.id);
+      const { data: qcBlocked } = await admin.rpc('driver_dispatch_blocked' as never, {
+        p_driver_id: driverA.id,
+      } as never);
+      await admin.from('driver_profiles').update({ province: 'ON' }).eq('profile_id', driverA.id);
+      const { data: onBlocked } = await admin.rpc('driver_dispatch_blocked' as never, {
+        p_driver_id: driverA.id,
+      } as never);
+      await admin.from('driver_profiles').update({ province: 'QC' }).eq('profile_id', driverA.id);
+
+      results.push({
+        name: 'a Quebec driver is not gated by the Ontario rules',
+        pass: qcBlocked === false,
+        detail: `blocked=${qcBlocked}`,
+      });
+      results.push({
+        name: 'an Ontario driver with no certificate on file is blocked from dispatch',
+        pass: onBlocked === true,
+        detail: `blocked=${onBlocked}`,
+      });
+
+      // ---- the geometry inspector is admin-only ----
+      const { data: zoneRow } = await admin
+        .from('regulated_towing_zones')
+        .select('id')
+        .eq('province', 'ON')
+        .eq('zone_code', '1A')
+        .single();
+      const { data: driverGeo } = await driverA.client.rpc('regulated_zone_geojson' as never, {
+        p_zone_id: zoneRow!.id,
+      } as never);
+      results.push({
+        name: 'an active zone boundary is readable (it is published law)',
+        pass: driverGeo != null,
+        detail: 'an active zone geometry was not readable',
+      });
+
+      const { data: retired } = await admin
+        .from('regulated_towing_zones')
+        .select('id')
+        .eq('province', 'QC')
+        .maybeSingle();
+      const { data: inactiveGeo } = await driverA.client.rpc('regulated_zone_geojson' as never, {
+        p_zone_id: retired!.id,
+      } as never);
+      results.push({
+        name: 'an inactive zone boundary is not exposed to a non-admin',
+        pass: inactiveGeo == null,
+        detail: 'an unactivated boundary leaked to a driver',
+      });
+
+      // ---- teardown ----
+      await admin.from('requests').delete().eq('user_id', rider.id);
+      await admin.from('company_members').delete().in('company_id', [coA, coB]);
+      await admin.from('companies').delete().in('id', [coA, coB]);
+    }
   } finally {
     for (const id of createdUserIds) {
       await deleteTestUser(id);

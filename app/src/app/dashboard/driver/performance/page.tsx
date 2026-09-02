@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { roleHome } from '@/lib/roleHome';
-import type { DispatchOffer, TowRequest } from '@/lib/supabase/types';
+import { listAcceptedDriverRequests } from '@/lib/actions/driverHistory';
+import type { DispatchOffer } from '@/lib/supabase/types';
 import { DriverPerformance } from './DriverPerformance';
 
 export default async function DriverPerformancePage() {
@@ -19,9 +20,12 @@ export default async function DriverPerformancePage() {
   // "driver reads own" has no status filter (0006_smart_dispatch.sql) — every
   // offer this driver was ever sent, which is exactly what an acceptance
   // rate / response time needs.
-  const [{ data: offers }, { data: requests }] = await Promise.all([
+  const [{ data: offers }, requests] = await Promise.all([
     supabase.from('dispatch_offers').select('*').eq('driver_id', user.id),
-    supabase.from('requests').select('*').eq('driver_id', user.id).in('status', ['completed', 'cancelled']),
+    // Only jobs actually taken: a request the rider cancelled while this
+    // driver was still deciding is not a job they did, and counting it made
+    // their completion rate worse for someone else's change of mind.
+    listAcceptedDriverRequests(user.id, ['completed', 'cancelled']),
   ]);
 
   return (
@@ -29,7 +33,7 @@ export default async function DriverPerformancePage() {
       rating={driverProfile?.rating ?? 5}
       totalServices={driverProfile?.total_services ?? 0}
       offers={(offers ?? []) as DispatchOffer[]}
-      requests={(requests ?? []) as TowRequest[]}
+      requests={requests}
     />
   );
 }

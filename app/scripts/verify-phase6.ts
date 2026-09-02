@@ -63,9 +63,13 @@ async function main() {
     on?.authority_phone === '511' && on?.dispatch_mode === 'external_authority_required',
     `phone=${on?.authority_phone} mode=${on?.dispatch_mode}`
   );
+  // Phase 6.1 gave the fifteen Ontario zones a derived geometry and activated
+  // them; Quebec still has none. What this asserts is the invariant that
+  // outlived that change: nothing is active without a boundary AND a stated
+  // provenance for it. The zone data itself is checked by verify:phase6_1.
   check(
-    'both seeded zones are INACTIVE with no geometry - the gap is visible, not papered over',
-    zones?.every((z) => !z.active && z.geometry_confidence === 'none') === true,
+    'no zone is active without a geometry and a stated provenance',
+    zones?.every((z) => !z.active || z.geometry_confidence !== 'none') === true,
     JSON.stringify(zones?.map((z) => [z.province, z.active, z.geometry_confidence]))
   );
   check(
@@ -74,7 +78,16 @@ async function main() {
   );
 
   // ---- the anti-fabrication guard, exercised for real ----
-  const zoneId = (await admin.from('regulated_towing_zones').select('id').limit(1).single()).data?.id;
+  // Deliberately a zone that HAS no geometry: the constraint is what stops one
+  // being switched on, so it must be tried against a row that would fail it.
+  const zoneId = (
+    await admin
+      .from('regulated_towing_zones')
+      .select('id')
+      .eq('geometry_confidence', 'none')
+      .limit(1)
+      .single()
+  ).data?.id;
   const { error: activateError } = await admin
     .from('regulated_towing_zones')
     .update({ active: true })
@@ -147,13 +160,17 @@ async function main() {
   check('no pricing rule is live', ruleCount === 0, `count=${ruleCount}`);
 
   // ---- document requirements: no jurisdiction assumed ----
-  const { count: reqCount } = await admin
+  // Phase 6 shipped this table empty because nothing had been verified. Phase
+  // 6.1 added Ontario's two from ontario.ca. The invariant that survives both
+  // is the one worth checking: a rule that gates a driver must name where it
+  // came from.
+  const { data: docRules } = await admin
     .from('document_requirements')
-    .select('*', { head: true, count: 'exact' });
+    .select('province, document_type, source_url');
   check(
-    'no document requirement is assumed for any province',
-    reqCount === 0,
-    `count=${reqCount} - a requirement exists that nobody verified`
+    'every document requirement names an official source',
+    (docRules ?? []).every((r) => (r.source_url ?? '').startsWith('https://')),
+    JSON.stringify(docRules)
   );
 
   // ---- service requirements are seeded ----

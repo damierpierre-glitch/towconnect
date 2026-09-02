@@ -13,7 +13,8 @@
     "verify:functions": "tsx scripts/verify-edge-functions.ts",
     "verify:webhook": "tsx scripts/verify-remote-webhook.ts",
     "verify:scheduler": "tsx scripts/verify-scheduler.ts",
-    "verify:phase6": "tsx scripts/verify-phase6.ts"
+    "verify:phase6": "tsx scripts/verify-phase6.ts",
+    "verify:phase6_1": "tsx scripts/verify-phase6_1.ts"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.8.2",

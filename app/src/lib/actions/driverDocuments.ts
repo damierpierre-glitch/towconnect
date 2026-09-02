@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import type { DriverDocument, DriverDocumentType } from '@/lib/supabase/types';
 
-const DOCUMENT_TYPES: DriverDocumentType[] = ['license', 'insurance', 'registration', 'other'];
+const DOCUMENT_TYPES: DriverDocumentType[] = ['license', 'insurance', 'registration', 'tow_certificate', 'other'];
 // Photos of paper documents (the realistic case for most drivers) plus PDF
 // scans. No video, no arbitrary binary — the storage RLS policy scopes
 // *where* a driver can write, not *what*; this is the content-level check.

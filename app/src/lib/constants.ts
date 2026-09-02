@@ -40,6 +40,7 @@ export const DRIVER_DOCUMENT_TYPES: { key: import('./supabase/types').DriverDocu
   { key: 'license', icon: '🪪', fr: 'Permis de conduire', en: "Driver's license" },
   { key: 'insurance', icon: '🛡️', fr: 'Assurance', en: 'Insurance' },
   { key: 'registration', icon: '📋', fr: 'Immatriculation', en: 'Registration' },
+  { key: 'tow_certificate', icon: '🎖️', fr: 'Certificat de remorqueur', en: 'Tow driver certificate' },
   { key: 'other', icon: '📄', fr: 'Autre document', en: 'Other document' },
 ];
 
