@@ -456,6 +456,196 @@ export type Refund = {
   updated_at: string;
 };
 
+
+// ---------------------------------------------------------------- Phase 8:
+// operations. Everything here describes something a person acts on; there is
+// no aggregate in this block that only ever goes up.
+export type AdminCapability = 'super_admin' | 'operations' | 'finance' | 'support';
+
+export type AdminGrant = {
+  profile_id: string;
+  capability: AdminCapability;
+  granted_by: string | null;
+  granted_at: string;
+  note: string | null;
+};
+
+export type IncidentType =
+  | 'dispatch_failure'
+  | 'payment_issue'
+  | 'customer_safety'
+  | 'driver_issue'
+  | 'regulatory_issue'
+  | 'fraud_suspected'
+  | 'technical_issue';
+
+export type IncidentSeverity = 'low' | 'medium' | 'high' | 'critical';
+export type IncidentStatus = 'open' | 'investigating' | 'resolved' | 'dismissed';
+
+export type OperationalIncident = {
+  id: string;
+  type: IncidentType;
+  severity: IncidentSeverity;
+  status: IncidentStatus;
+  request_id: string | null;
+  company_id: string | null;
+  driver_id: string | null;
+  payment_id: string | null;
+  title: string;
+  description: string | null;
+  assigned_admin: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+  resolution_note: string | null;
+};
+
+export type IncidentEvent = {
+  id: number;
+  incident_id: string;
+  from_status: IncidentStatus | null;
+  to_status: IncidentStatus;
+  note: string | null;
+  actor_id: string | null;
+  created_at: string;
+};
+
+export type RiskFlagKind =
+  | 'repeated_refunds'
+  | 'repeated_cancellations'
+  | 'repeated_payment_failures'
+  | 'shared_payment_method'
+  | 'driver_behaviour_anomaly';
+
+export type RiskFlag = {
+  id: number;
+  kind: RiskFlagKind;
+  subject_profile_id: string | null;
+  subject_company_id: string | null;
+  // The numbers the signal was derived from, so a human can check the
+  // arithmetic rather than trust the label.
+  observation: Record<string, unknown>;
+  note: string | null;
+  created_by: string | null;
+  created_at: string;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
+};
+
+export type OpsThreshold = {
+  key: string;
+  value_seconds: number;
+  // 'derived' mirrors a rule the system already enforces; 'engineering' is a
+  // default chosen to make the queue useful and is explicitly not an SLA.
+  origin: 'derived' | 'engineering';
+  description: string;
+  updated_at: string;
+  updated_by: string | null;
+};
+
+export type AttentionItem = {
+  kind: string;
+  severity: string;
+  subject_kind: string;
+  subject_id: string | null;
+  request_id: string | null;
+  title: string;
+  detail: string | null;
+  since: string | null;
+  threshold_origin: string | null;
+};
+
+export type OpsKpis = {
+  requests_created: number;
+  requests_matched: number;
+  requests_completed: number;
+  requests_cancelled: number;
+  requests_expired: number;
+  // Every rate is NULL, never 0, over an empty denominator.
+  match_rate: number | string | null;
+  completion_rate: number | string | null;
+  cancellation_rate: number | string | null;
+  offers_made: number;
+  offers_accepted: number;
+  acceptance_rate: number | string | null;
+  median_time_to_match_seconds: number | string | null;
+  median_time_to_arrival_seconds: number | string | null;
+  regulated_requests: number;
+  requests_needing_human: number;
+  failed_payment_rate: number | string | null;
+};
+
+export type ReconciliationException = {
+  kind: string;
+  request_id: string | null;
+  company_id: string | null;
+  detail: string;
+};
+
+export type LiveMapEntity = {
+  entity: 'driver' | 'request';
+  id: string;
+  lat: number;
+  lng: number;
+  label: string;
+  state: string;
+  company_id: string | null;
+  since: string | null;
+};
+
+export type RequestTimelineEntry = {
+  status: RequestStatus;
+  created_at: string;
+};
+
+export type DispatchCandidateRow = {
+  driver_id: string;
+  full_name: string;
+  distance_km: number;
+  company_id: string | null;
+  eligible: boolean;
+  exclusion_reason: string | null;
+  zone_authorized: boolean;
+  service_compatibility: string;
+  service_area_ok: boolean;
+  preferred_partner: boolean;
+  score: number;
+};
+
+export type CompanyHealthRow = {
+  id: string;
+  name: string;
+  status: string;
+  province: string | null;
+  drivers: number;
+  driversOnline: number;
+  driversApproved: number;
+  vehicles: number;
+  serviceAreas: number;
+  zoneAuthorizations: number;
+  connectStatus: string;
+  payoutReady: boolean;
+  completionRate: number | null;
+  openIncidents: number;
+};
+
+export type DriverOpsRow = {
+  profileId: string;
+  name: string;
+  companyId: string | null;
+  approvalStatus: string;
+  // Three states, not two: an app that is open but silent is neither.
+  presence: 'online' | 'stale' | 'offline';
+  lastHeartbeatAt: string | null;
+  rating: number;
+  totalServices: number;
+  activeRequestId: string | null;
+  activeStatus: string | null;
+  documents: { approved: number; pending: number; rejected: number };
+  openIncidents: number;
+};
+
 export type NearbyDriverRow = {
   profile_id: string;
   full_name: string;
@@ -776,6 +966,38 @@ export interface Database {
             referencedColumns: ['id'];
           },
         ];
+      };
+      admin_grants: {
+        Row: AdminGrant;
+        Insert: { profile_id: string; capability: AdminCapability; granted_by?: string | null; note?: string | null };
+        Update: Partial<Pick<AdminGrant, 'note'>>;
+        Relationships: [];
+      };
+      operational_incidents: {
+        Row: OperationalIncident;
+        Insert: Partial<OperationalIncident> & { type: IncidentType; title: string };
+        Update: Partial<OperationalIncident>;
+        Relationships: [];
+      };
+      incident_events: {
+        Row: IncidentEvent;
+        // Written by the status trigger, never by an application.
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      risk_flags: {
+        Row: RiskFlag;
+        Insert: Partial<RiskFlag> & { kind: RiskFlagKind; observation: Record<string, unknown> };
+        // Only the acknowledgement may change (0041 trigger).
+        Update: Partial<Pick<RiskFlag, 'acknowledged_at' | 'acknowledged_by' | 'note'>>;
+        Relationships: [];
+      };
+      ops_thresholds: {
+        Row: OpsThreshold;
+        Insert: Partial<OpsThreshold> & { key: string; value_seconds: number; origin: string; description: string };
+        Update: Partial<OpsThreshold>;
+        Relationships: [];
       };
       pricing_configs: {
         Row: PricingConfig;
@@ -1145,6 +1367,30 @@ export interface Database {
       is_refund_authorizer: {
         Args: Record<string, never>;
         Returns: boolean;
+      };
+      has_admin_capability: {
+        Args: { p_capability: AdminCapability };
+        Returns: boolean;
+      };
+      ops_attention_queue: {
+        Args: Record<string, never>;
+        Returns: AttentionItem[];
+      };
+      ops_kpis: {
+        Args: { p_from: string; p_to: string };
+        Returns: OpsKpis[];
+      };
+      ops_reconciliation_exceptions: {
+        Args: Record<string, never>;
+        Returns: ReconciliationException[];
+      };
+      ops_live_map: {
+        Args: { p_min_lat: number; p_min_lng: number; p_max_lat: number; p_max_lng: number };
+        Returns: LiveMapEntity[];
+      };
+      ops_threshold: {
+        Args: { p_key: string };
+        Returns: string;
       };
       // Returns null while no commission rate is configured. Callers must
       // render nothing in that case — never a zero.

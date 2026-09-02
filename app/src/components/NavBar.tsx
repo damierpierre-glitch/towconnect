@@ -47,6 +47,10 @@ const businessLink: SubLink = {
 };
 
 const adminSubLinks: SubLink[] = [
+  // Phase 8. First in the list because it is the screen an operator on shift
+  // opens: everything else here is a place you go when you already know what
+  // you are looking for.
+  { href: '/dashboard/admin/operations', icon: '🎛️', fr: 'Opérations', en: 'Operations' },
   { href: '/dashboard/admin/zones', icon: '⚠️', fr: 'Zones', en: 'Zones' },
   // Phase 7. Two separate screens on purpose: deciding the economics and
   // watching the money are different jobs, and putting the commission form

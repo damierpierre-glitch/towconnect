@@ -3230,6 +3230,297 @@ async function run(): Promise<Result[]> {
 
       await admin.from('request_supplements').delete().eq('request_id', jobA);
 
+      // ================================================================
+      // Phase 8 — the command centre. Least privilege, tested as behaviour:
+      // each scoped admin is asked to do the thing their role must not do.
+      // ================================================================
+      const opsAdmin = await createTestUser('user');
+      createdUserIds.push(opsAdmin.id);
+      const financeAdmin = await createTestUser('user');
+      createdUserIds.push(financeAdmin.id);
+      const supportAdmin = await createTestUser('user');
+      createdUserIds.push(supportAdmin.id);
+
+      await admin
+        .from('profiles')
+        .update({ role: 'admin' })
+        .in('id', [opsAdmin.id, financeAdmin.id, supportAdmin.id]);
+
+      // Before any grant exists, an admin is unscoped and keeps full access.
+      // That grandfather rule is what let Phase 8 ship without locking the
+      // platform's existing operators out of it, so it is asserted rather
+      // than assumed.
+      const { data: unscopedCanFinance } = await financeAdmin.client.rpc(
+        'has_admin_capability' as never,
+        { p_capability: 'finance' } as never
+      );
+      results.push({
+        name: 'an admin with no grants keeps full access (the grandfather rule)',
+        pass: unscopedCanFinance === true,
+        detail: 'an unscoped admin was refused, which would lock out every existing operator',
+      });
+
+      await admin.from('admin_grants').insert([
+        { profile_id: opsAdmin.id, capability: 'operations' },
+        { profile_id: financeAdmin.id, capability: 'finance' },
+        { profile_id: supportAdmin.id, capability: 'support' },
+      ] as never);
+
+      const holds = async (user: TestUser, capability: string) => {
+        const { data } = await user.client.rpc('has_admin_capability' as never, {
+          p_capability: capability,
+        } as never);
+        return data === true;
+      };
+
+      results.push({
+        name: 'granting one capability scopes the admin to it',
+        pass: (await holds(opsAdmin, 'operations')) && !(await holds(opsAdmin, 'finance')),
+        detail: 'an operations admin still held finance',
+      });
+
+      // 1. Support may look, and may not move money.
+      results.push({
+        name: 'support cannot authorize a refund',
+        pass: !(await holds(supportAdmin, 'finance')),
+        detail: 'support held the finance capability',
+      });
+      const { data: supportRefunds } = await supportAdmin.client.rpc(
+        'is_refund_authorizer' as never,
+        {} as never
+      );
+      results.push({
+        name: 'is_refund_authorizer() refuses a support-scoped admin',
+        pass: supportRefunds !== true,
+        detail: 'support was accepted as a refund authorizer',
+      });
+
+      // 2. Operations runs the platform and does not decide the economics.
+      const { error: opsPricingError } = await opsAdmin.client
+        .from('pricing_configs')
+        .insert({ version: 90001, label: 'ops attempt', status: 'draft', commission_percent: 5 } as never);
+      results.push({
+        name: 'operations cannot write the platform economics',
+        pass: Boolean(opsPricingError),
+        detail: 'an operations admin created a pricing configuration',
+      });
+      const { data: opsFinance } = await opsAdmin.client.rpc('is_refund_authorizer' as never, {} as never);
+      results.push({
+        name: 'operations cannot authorize a refund',
+        pass: opsFinance !== true,
+        detail: 'an operations admin was accepted as a refund authorizer',
+      });
+
+      // 3. Finance handles money and does not touch the regulatory layer.
+      const { data: someZone } = await admin
+        .from('regulated_towing_zones')
+        .select('id, active')
+        .limit(1)
+        .maybeSingle();
+      if (someZone?.id) {
+        const { error: financeZoneError } = await financeAdmin.client
+          .from('regulated_towing_zones')
+          .update({ active: !someZone.active })
+          .eq('id', someZone.id);
+        const { data: zoneAfter } = await admin
+          .from('regulated_towing_zones')
+          .select('active')
+          .eq('id', someZone.id)
+          .single();
+        results.push({
+          name: 'finance cannot activate or deactivate a regulated zone',
+          pass: Boolean(financeZoneError) || zoneAfter!.active === someZone.active,
+          detail: 'a finance admin changed a regulated zone',
+        });
+      }
+
+      // 4. The operational queue and the live map are internal.
+      const { error: riderQueueError } = await rider.client.rpc('ops_attention_queue' as never, {} as never);
+      const { error: driverMapError } = await driverA.client.rpc('ops_live_map' as never, {
+        p_min_lat: 44,
+        p_min_lng: -75,
+        p_max_lat: 47,
+        p_max_lng: -72,
+      } as never);
+      results.push({
+        name: 'a customer cannot read the operational queue',
+        pass: Boolean(riderQueueError),
+        detail: 'a customer read the platform attention queue',
+      });
+      results.push({
+        name: 'a driver cannot read the live operations map',
+        pass: Boolean(driverMapError),
+        detail: 'a driver read every driver and job on the platform',
+      });
+      const { error: ownerKpiError } = await ownerA.client.rpc('ops_kpis' as never, {
+        p_from: new Date(Date.now() - 86_400_000).toISOString(),
+        p_to: new Date().toISOString(),
+      } as never);
+      results.push({
+        name: 'a company owner cannot read platform-wide KPIs',
+        pass: Boolean(ownerKpiError),
+        detail: "a company owner read the whole platform's numbers",
+      });
+
+      // 5. Incidents are internal. A driver must not read the note written
+      //    about their own conduct, and a customer must not learn they are the
+      //    subject of a fraud incident.
+      const { data: incidentRow } = await admin
+        .from('operational_incidents')
+        .insert({
+          type: 'driver_issue',
+          severity: 'high',
+          title: 'RLS fixture — internal note',
+          description: 'Internal only.',
+          request_id: jobA,
+          driver_id: driverA.id,
+          company_id: coA,
+        } as never)
+        .select('id')
+        .single();
+
+      const { data: driverSeesIncident } = await driverA.client
+        .from('operational_incidents')
+        .select('id')
+        .eq('id', incidentRow!.id)
+        .maybeSingle();
+      const { data: riderSeesIncident } = await rider.client
+        .from('operational_incidents')
+        .select('id')
+        .eq('id', incidentRow!.id)
+        .maybeSingle();
+      const { data: ownerSeesIncident } = await ownerA.client
+        .from('operational_incidents')
+        .select('id')
+        .eq('id', incidentRow!.id)
+        .maybeSingle();
+      const { data: otherCompanySees } = await ownerB.client
+        .from('operational_incidents')
+        .select('id')
+        .eq('id', incidentRow!.id)
+        .maybeSingle();
+
+      results.push({
+        name: 'a driver cannot read an incident about themselves',
+        pass: driverSeesIncident == null,
+        detail: 'a driver read the internal note about their own conduct',
+      });
+      results.push({
+        name: 'a customer cannot read an internal incident',
+        pass: riderSeesIncident == null,
+        detail: 'a customer read an internal incident',
+      });
+      results.push({
+        name: "a company cannot read incidents about itself or anyone else",
+        pass: ownerSeesIncident == null && otherCompanySees == null,
+        detail: 'a company owner read internal incidents',
+      });
+
+      const { data: supportSeesIncident } = await supportAdmin.client
+        .from('operational_incidents')
+        .select('id')
+        .eq('id', incidentRow!.id)
+        .maybeSingle();
+      results.push({
+        name: 'support can read an incident (it is why they are on the phone)',
+        pass: supportSeesIncident?.id === incidentRow!.id,
+        detail: 'support could not read incidents',
+      });
+
+      const { error: supportWriteIncident } = await supportAdmin.client
+        .from('operational_incidents')
+        .update({ status: 'dismissed' })
+        .eq('id', incidentRow!.id);
+      const { data: incidentAfterSupport } = await admin
+        .from('operational_incidents')
+        .select('status')
+        .eq('id', incidentRow!.id)
+        .single();
+      results.push({
+        name: 'support cannot resolve or dismiss an incident',
+        pass: Boolean(supportWriteIncident) || incidentAfterSupport!.status === 'open',
+        detail: 'support dismissed an incident',
+      });
+
+      // 6. Risk flags are the most sensitive thing here: an observation about
+      //    a person, written before anybody has judged it.
+      const { data: flagRow } = await admin
+        .from('risk_flags')
+        .insert({
+          kind: 'repeated_cancellations',
+          subject_profile_id: rider.id,
+          observation: { count: 4, window_days: 30 },
+        } as never)
+        .select('id')
+        .single();
+
+      const { data: riderSeesFlag } = await rider.client
+        .from('risk_flags')
+        .select('id')
+        .eq('id', flagRow!.id)
+        .maybeSingle();
+      const { data: driverSeesFlag } = await driverA.client
+        .from('risk_flags')
+        .select('id')
+        .eq('id', flagRow!.id)
+        .maybeSingle();
+      const { data: supportSeesFlag } = await supportAdmin.client
+        .from('risk_flags')
+        .select('id')
+        .eq('id', flagRow!.id)
+        .maybeSingle();
+      results.push({
+        name: 'the subject of a risk flag cannot read it',
+        pass: riderSeesFlag == null,
+        detail: 'a customer read the risk observation written about them',
+      });
+      results.push({
+        name: 'a driver cannot read risk flags',
+        pass: driverSeesFlag == null,
+        detail: 'a driver read internal risk flags',
+      });
+      results.push({
+        name: 'support cannot read risk flags either',
+        pass: supportSeesFlag == null,
+        detail: 'support read internal risk observations',
+      });
+
+      // 7. An observation is not editable. Acknowledging it is, and that is
+      //    the only thing that is.
+      const { error: flagEditError } = await admin
+        .from('risk_flags')
+        .update({ observation: { count: 0 } } as never)
+        .eq('id', flagRow!.id);
+      results.push({
+        name: 'a risk observation cannot be rewritten, even by the service role',
+        pass: Boolean(flagEditError),
+        detail: 'the observation behind a flag was edited',
+      });
+
+      // 8. The incident history is written by the trigger, and nobody inserts
+      //    into it directly.
+      const { data: incidentHistory } = await admin
+        .from('incident_events')
+        .select('to_status')
+        .eq('incident_id', incidentRow!.id);
+      results.push({
+        name: 'opening an incident logs its own history',
+        pass: (incidentHistory ?? []).length >= 1,
+        detail: 'no incident_events row was written',
+      });
+      const { error: opsInsertEvent } = await opsAdmin.client
+        .from('incident_events')
+        .insert({ incident_id: incidentRow!.id, to_status: 'resolved' } as never);
+      results.push({
+        name: 'nobody can write incident history by hand',
+        pass: Boolean(opsInsertEvent),
+        detail: 'an admin inserted a fabricated incident event',
+      });
+
+      await admin.from('risk_flags').delete().eq('id', flagRow!.id);
+      await admin.from('operational_incidents').delete().eq('id', incidentRow!.id);
+      await admin.from('pricing_configs').delete().eq('version', 90001);
+
       // ---- teardown ----
       await admin.from('requests').delete().eq('user_id', rider.id);
       await admin.from('company_members').delete().in('company_id', [coA, coB]);
