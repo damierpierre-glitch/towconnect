@@ -65,10 +65,21 @@ async function handleEvent(event: Stripe.Event, admin: ReturnType<typeof createA
   switch (event.type) {
     // Fired once the authorization succeeds (manual capture) — the intent
     // becomes capturable. This is the authoritative "authorized" signal.
+    //
+    // It must not move a payment BACKWARDS. Stripe does not promise delivery
+    // order, and the Phase 7.1 run caught exactly that: this event arrived
+    // after the capture had already succeeded and rewrote a captured payment
+    // as merely authorized, which then reads as money still owed. The filter
+    // below is what makes the write monotonic — an authorization signal only
+    // applies while the payment is still pre-capture.
     case 'payment_intent.amount_capturable_updated':
     case 'payment_intent.processing': {
       const intent = event.data.object as Stripe.PaymentIntent;
-      await setStatusByIntentId(admin, intent.id, 'authorized');
+      await admin
+        .from('payments')
+        .update({ status: 'authorized' satisfies PaymentStatus })
+        .eq('stripe_payment_intent_id', intent.id)
+        .in('status', ['requires_payment_method', 'requires_action', 'authorized']);
       break;
     }
     // Fired on a successful capture.

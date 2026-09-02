@@ -15,7 +15,9 @@
     "verify:scheduler": "tsx scripts/verify-scheduler.ts",
     "verify:phase6": "tsx scripts/verify-phase6.ts",
     "verify:phase6_1": "tsx scripts/verify-phase6_1.ts",
-    "verify:phase7": "tsx scripts/verify-phase7.ts"
+    "verify:phase7": "tsx scripts/verify-phase7.ts",
+    "verify:finance": "tsx scripts/verify-finance.ts",
+    "test:finance": "tsx --tsconfig tsconfig.e2e.json scripts/finance-e2e.ts"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.8.2",

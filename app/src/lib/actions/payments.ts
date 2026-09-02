@@ -179,6 +179,14 @@ export async function authorizeRequestPayment(requestId: string, amount: number)
         capture_method: 'manual',
         confirm: true,
         off_session: true,
+        // An approved supplement has to be added to THIS hold, and Stripe only
+        // allows that when incremental authorization was requested at creation
+        // time. Asked for as 'if_available' because most online cards do not
+        // support it: where they do, the supplement is secured on the existing
+        // hold; where they do not, the supplement is recorded as uncollected
+        // rather than silently credited. Without this option the first outcome
+        // is impossible, which is what the Phase 7.1 run found.
+        payment_method_options: { card: { request_incremental_authorization: 'if_available' } },
         metadata: { towconnect_request_id: requestId, towconnect_payment_id: paymentRow.id },
       },
       { idempotencyKey: `authorize-${paymentRow.id}` }

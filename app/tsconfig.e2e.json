@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "paths": {
+      "server-only": ["./scripts/e2e/shims/empty.ts"],
+      "next/cache": ["./scripts/e2e/shims/next-cache.ts"],
+      "next/headers": ["./scripts/e2e/shims/next-headers.ts"],
+      "@/lib/supabase/server": ["./scripts/e2e/shims/supabase-server.ts"],
+      "@/*": ["./src/*"]
+    }
+  }
+}
