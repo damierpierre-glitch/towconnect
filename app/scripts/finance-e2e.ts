@@ -1261,24 +1261,20 @@ async function main() {
       await admin.from('pricing_configs').update({ status: 'archived' }).eq('id', fixtureConfigV2);
     }
 
-    // Archived is not enough. A fixture version left in the table takes a
-    // version NUMBER with it, so the first real configuration would be v11 and
-    // the history would read as ten abandoned pricing decisions. They are
-    // deleted; pricing_config_audit has no foreign key precisely so the record
-    // of what happened outlives the rows it describes.
-    await admin.from('pricing_configs').delete().ilike('label', 'FIXTURE%');
+    // ---- order matters, and it is not the obvious one ----------------
+    // Every fixture row is chained: a request points at the pricing config, a
+    // ledger entry points at the company, a payout points at both, and the
+    // config points at the admin who authored it. Deleting in the wrong order
+    // does not error loudly — each delete just quietly affects nothing, and
+    // the residue only shows up when somebody counts the rows afterwards.
+    // Which is exactly what happened: configs were deleted first, the fixture
+    // requests still referenced them, and the run left an admin account and
+    // two configurations behind while reporting a clean cleanup.
+    //
+    // Companies before their money, users before their configurations.
 
-    const { data: stillActive } = await admin.from('pricing_configs').select('id').eq('status', 'active');
-    const { data: configuredNow } = await admin.rpc('pricing_configured' as never, {} as never);
-    section = '14. Cleanup';
-    ok('no economic configuration is left active', (stillActive ?? []).length === 0);
-    ok('pricing_configured() is false again', configuredNow === false, String(configuredNow));
-
-    // Companies go last: the ledger cascades with them, which is the only way
-    // an entry may ever leave.
     if (createdCompanyIds.length) {
       await admin.from('company_members').delete().in('company_id', createdCompanyIds);
-      await admin.from('provider_payouts').delete().in('company_id', createdCompanyIds);
     }
     for (const userId of createdUserIds) {
       await admin.from('refunds').delete().eq('created_by', userId);
@@ -1292,30 +1288,59 @@ async function main() {
       await admin.from('refunds').delete().in('request_id', fixtureRequestIds);
       await admin.from('request_supplements').delete().in('request_id', fixtureRequestIds);
     }
+    // Companies take their ledger and their payouts with them (0035, 0040).
+    // That cascade is the only way a ledger entry may ever leave.
     if (createdCompanyIds.length) {
       await admin.from('companies').delete().in('id', createdCompanyIds);
     }
-    // A fixture account that authored an economic decision cannot be deleted:
-    // pricing_configs and pricing_config_audit reference it, and that
-    // attribution is the point of an audit trail. What it must NOT keep is
-    // the privilege, so the role goes back to 'user' before the attempt.
-    const undeletable: string[] = [];
+
+    // A fixture account must not keep the privilege even if it keeps existing.
     for (const userId of createdUserIds) {
       await admin.from('profiles').update({ role: 'user' }).eq('id', userId);
+      await admin.auth.admin.deleteUser(userId);
+    }
+
+    // Now nothing points at the fixture configurations: their requests went
+    // with the deleted profiles. Archiving is not enough — a fixture version
+    // holds a version NUMBER, so leaving ten of them would make the first real
+    // configuration v11 and the history read as ten abandoned pricing
+    // decisions. pricing_config_audit has no foreign key precisely so the
+    // record of what happened outlives the rows it described.
+    const { error: configDeleteError } = await admin
+      .from('pricing_configs')
+      .delete()
+      .ilike('label', 'FIXTURE%');
+
+    // Second pass: an account blocked a moment ago by the configuration it
+    // authored is deletable now that the configuration is gone.
+    const undeletable: string[] = [];
+    for (const userId of createdUserIds) {
+      const { data: stillThere } = await admin.from('profiles').select('id').eq('id', userId).maybeSingle();
+      if (!stillThere) continue;
       const { error } = await admin.auth.admin.deleteUser(userId);
       if (error) undeletable.push(userId);
     }
+
+    section = '14. Cleanup';
+    const { data: stillActive } = await admin.from('pricing_configs').select('id').eq('status', 'active');
+    const { data: configuredNow } = await admin.rpc('pricing_configured' as never, {} as never);
+    const { data: fixtureConfigsLeft } = await admin
+      .from('pricing_configs')
+      .select('id')
+      .ilike('label', 'FIXTURE%');
+
+    ok('no economic configuration is left active', (stillActive ?? []).length === 0);
+    ok('pricing_configured() is false again', configuredNow === false, String(configuredNow));
+    ok(
+      'no fixture configuration is left in the table',
+      (fixtureConfigsLeft ?? []).length === 0,
+      `${(fixtureConfigsLeft ?? []).length} left${configDeleteError ? ` (${configDeleteError.message})` : ''}`
+    );
+    ok('every fixture account was deleted', undeletable.length === 0, `${undeletable.length} left`);
     ok(
       'no fixture account is left holding admin rights',
       (await admin.from('profiles').select('id').in('id', createdUserIds).eq('role', 'admin')).data?.length === 0
     );
-    if (undeletable.length) {
-      record(
-        'note',
-        `${undeletable.length} fixture account(s) could not be deleted`,
-        'they authored the fixture pricing configuration, and pricing_config_audit keeps that attribution on purpose — privileges were stripped instead'
-      );
-    }
 
     const { data: leftoverEntries } = await admin
       .from('provider_ledger_entries')

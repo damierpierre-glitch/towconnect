@@ -9,9 +9,11 @@
 
 ## 0. Résultat en une ligne
 
-**97 assertions exécutées réellement, 0 échec, 1 action humaine restante.**
+**99 assertions exécutées réellement, 0 échec, 1 action humaine restante.**
 
-Ce que cette phase a produit de plus utile n'est pas une case verte : ce sont **deux défauts financiers réels** qu'aucun test unitaire ni vérification de schéma ne pouvait attraper, parce que les deux exigent le vrai timing de Stripe et un vrai cycle de vie d'entreprise pour apparaître.
+*(Run confirmé à nouveau le 2026-09-02 après correction du nettoyage — voir §3.3.)*
+
+Ce que cette phase a produit de plus utile n'est pas une case verte : ce sont **trois défauts réels** qu'aucun test unitaire ni vérification de schéma ne pouvait attraper, parce que chacun exige le vrai timing de Stripe, un vrai cycle de vie d'entreprise, ou un second run pour apparaître.
 
 ---
 
@@ -67,7 +69,7 @@ L'enregistrement de la carte du client passe normalement par Stripe Elements, un
 
 ---
 
-## 3. Les deux défauts trouvés — et corrigés
+## 3. Les défauts trouvés — et corrigés
 
 ### 3.1 Un webhook tardif « dé-encaissait » un paiement encaissé
 
@@ -103,6 +105,16 @@ C'est exactement la même erreur que la première version de 0035, une table plu
 **Correctif — migration 0040.** Les versements cascadent avec leur entreprise ; la référence au versement passe de `RESTRICT` à `NO ACTION`, ce qui refuse toujours la suppression isolée d'un versement qui orphelinerait une écriture, mais laisse la cascade de l'entreprise faire son travail dans la même instruction.
 
 **Vérification.** `verify:phase7` (24/24) inclut « deleting a company cascades its ledger away » ; le run 7.1 supprime désormais ses entreprises fixtures sans résidu.
+
+### 3.3 Le nettoyage se déclarait propre alors qu'il laissait des lignes
+
+**Observé.** Un run répété a laissé un compte fixture et deux configurations tarifaires, alors que la section Nettoyage affichait tout en vert.
+
+**Cause.** L'ordre de suppression. Les configurations fixtures étaient supprimées **avant** les courses qui les référencent (`requests.pricing_config_id`), donc la suppression ne touchait rien — sans erreur, parce qu'un `DELETE` qui n'affecte aucune ligne réussit. Le compte admin qui les avait créées restait alors lui aussi indéboulonnable, et la seule assertion présente ne regardait que les privilèges, pas l'existence.
+
+**Correctif.** L'ordre suit désormais les dépendances — entreprises (qui emportent grand livre et versements), puis comptes (qui emportent leurs courses), **puis** configurations, **puis** seconde passe de suppression des comptes que la configuration bloquait. Trois assertions ont été ajoutées : aucune configuration fixture restante, tout compte fixture supprimé, aucun privilège conservé.
+
+**La leçon est la même que partout ailleurs dans ce projet :** vérifier par l'effet en base, jamais par l'absence d'erreur.
 
 ---
 
@@ -239,7 +251,7 @@ Toujours entièrement ouvert. Aucune décision n'a été prise ni enregistrée.
 | --- | --- |
 | Configurations économiques actives | **0** |
 | `pricing_configured()` | **`false`** |
-| Configurations enregistrées (toutes versions) | **0** — les 10 versions fixtures ont été supprimées, pour que la première vraie configuration soit la v1 |
+| Configurations enregistrées (toutes versions) | **0** — toutes les versions fixtures supprimées, pour que la première vraie configuration soit la v1 |
 | Écritures de grand livre | 0 |
 | Versements | 0 |
 | Remboursements | 0 |
@@ -248,8 +260,8 @@ Toujours entièrement ouvert. Aucune décision n'a été prise ni enregistrée.
 | Comptes fixtures | 0 |
 | Comptes avec `role = 'admin'` | 1 (le compte réel du projet) |
 | Autorisations Stripe ouvertes | 0 — toutes annulées, encaissées ou remboursées |
-| **Journal d'audit conservé** | **55 lignes** |
-| **Événements webhook conservés** | **89 lignes** |
+| **Journal d'audit conservé** | **79 lignes** |
+| **Événements webhook conservés** | **109 lignes** |
 
 Les deux dernières lignes sont conservées volontairement : ce sont les preuves que l'activation a été journalisée et que Stripe a bien atteint l'endpoint.
 
@@ -268,7 +280,7 @@ Les deux dernières lignes sont conservées volontairement : ce sont les preuves
 | `npm run verify:phase6_1` | ✅ 32 |
 | `npm run verify:phase7` | ✅ 24 |
 | `npm run verify:finance` | ✅ **13** (nouveau) |
-| `npm run test:finance` | ✅ **97 exécutées, 0 échec, 1 action humaine** (nouveau) |
+| `npm run test:finance` | ✅ **99 exécutées, 0 échec, 1 action humaine** (nouveau) |
 
 ---
 
@@ -280,7 +292,7 @@ Les deux dernières lignes sont conservées volontairement : ce sont les preuves
 * **Supplements** — ✅ exécuté (chemin `uncollected`). Le chauffeur ne peut pas auto-approuver ; le client n'est pas débité sans approbation ; un supplément non collecté ne crédite rien. Le chemin « autorisation incrémentale » est **indisponible sur ce compte Stripe** (§4).
 * **Refunds** — ✅ exécuté réellement, partiel **et** total. Reprise partenaire proportionnelle par écriture négative, écriture d'origine intacte, rejeu de webhook dédupliqué.
 * **Payout status** — ✅ **`payout prepared internally`**. ❌ **pas** `payout executed by Stripe` : aucun appel `transfers.create`/`payouts.create` n'existe dans Phase 7.
-* **Tests** — 97 assertions E2E, 178 RLS, 60 unitaires, 37 + 32 + 24 + 13 vérifications d'effet en base. `tsc`, `lint`, `build` propres.
+* **Tests** — 99 assertions E2E, 178 RLS, 60 unitaires, 37 + 32 + 24 + 13 vérifications d'effet en base. `tsc`, `lint`, `build` propres.
 * **Commission active finale : `NO`**
 * **Blockers** — un seul, externe et non technique : **activer Stripe Connect en mode test sur le compte plateforme**. Il bloque la validation Connect et tout versement réel, mais rien d'autre de la chaîne financière.
 
