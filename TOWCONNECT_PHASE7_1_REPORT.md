@@ -9,9 +9,9 @@
 
 ## 0. Résultat en une ligne
 
-**99 assertions exécutées réellement, 0 échec, 1 action humaine restante.**
+**107 assertions exécutées réellement, 0 échec, 1 action humaine restante.**
 
-*(Run confirmé à nouveau le 2026-09-02 après correction du nettoyage — voir §3.3.)*
+*Mise à jour du 2026-09-02 : Stripe Connect a été activé sur le compte plateforme pendant cette phase (modèle **Marketplace**, en sandbox). Les 9 assertions Connect qui étaient auparavant non exécutables le sont désormais et passent. Le seul point restant est le formulaire hébergé d'onboarding — voir §9.2.*
 
 Ce que cette phase a produit de plus utile n'est pas une case verte : ce sont **trois défauts réels** qu'aucun test unitaire ni vérification de schéma ne pouvait attraper, parce que chacun exige le vrai timing de Stripe, un vrai cycle de vie d'entreprise, ou un second run pour apparaître.
 
@@ -52,7 +52,7 @@ L'enregistrement de la carte du client passe normalement par Stripe Elements, un
 | § | Scénario | Statut | Preuve Stripe | Preuve DB |
 | --- | --- | --- | --- | --- |
 | 1 | Configuration économique temporaire (fixture) | **Exécuté** | — | brouillon créé, activé, `pricing_configured()` → `true`, 2+ lignes d'audit |
-| 2 | Stripe Connect Express | **Non exécutable** | `accounts.create` refusé : *« You can only create new accounts if you've signed up for Connect »* | aucune — voir §6 |
+| 2 | Stripe Connect Express | **Exécuté** | compte Express `CA` créé, Account Link `connect.stripe.com/setup/e/…`, `charges_enabled` / `payouts_enabled` = `false`, `requirements.currently_due` non vide | `stripe_account_id` écrit, drapeaux identiques à la réponse Stripe, `connect_updated_at` renseigné après relecture |
 | 3 | Course avec économie réelle | **Exécuté** | PaymentIntent `requires_capture`, montant 4500 | `partner_amount` 36,90 $ · `commission_amount` 6,49 $ · `payment_processing_cost` 1,61 $ · `pricing_config_id`/`version` · `economics_frozen_at` |
 | 4 | Immutabilité du prix partenaire | **Exécuté** | — | v2 à 40 % activée puis désactivée : la course reste à 36,90 $ et pointe toujours v1 |
 | 5 | Complétion + capture + ledger | **Exécuté** | PaymentIntent `succeeded` | 1 seule écriture `earning` = 36,90 $, `available_at` renseigné ; rejeu → toujours 1 |
@@ -196,7 +196,7 @@ La reprise est **proportionnelle** : 18,00 $ × (36,90 / 45,00) = 14,76 $. TowCo
 | Clé Stripe **live** | refus **avant** tout appel réseau (`LiveModeRefused`) |
 | Clé non classifiable | refus |
 | Aucune clé | refus |
-| Compte Connect incomplet | non observable — Connect indisponible (§9) |
+| Compte Connect incomplet | **observé** : `charges_enabled` et `payouts_enabled` à `false`, `requirements.currently_due` = `business_type`, `external_account`, `tos_acceptance.date`, `tos_acceptance.ip` — stockés tels quels, jamais résumés en un booléen |
 | Versement > solde | refusé |
 | Remboursement sur paiement jamais encaissé | refusé |
 | Remboursement sans raison | refusé |
@@ -211,21 +211,29 @@ Aucun état financier n'a disparu silencieusement : chaque refus laisse soit une
 
 ## 9. Remaining Human Actions
 
-### 9.1 Activer Stripe Connect sur le compte plateforme — **bloquant pour §2 et §10-Stripe**
+### 9.1 ~~Activer Stripe Connect~~ — **fait**
 
-**Ce que Stripe répond aujourd'hui :**
+Connect a été activé sur le compte plateforme en **sandbox**, modèle **Marketplace** (« Sell to buyers yourself and send funds to recipients »), qui est celui que le code implémente déjà : le client paie TowConnect sur le compte plateforme, et TowConnect reverse ensuite au partenaire. L'autre option, *Platform*, correspond à des charges directes sur le compte connecté — ce n'est pas notre architecture.
 
-> You can only create new accounts if you've signed up for Connect, which you can do at https://dashboard.stripe.com/connect.
+Aucune donnée bancaire, d'identité ou de carte n'a été saisie pour cela : le choix du modèle est un réglage de plateforme, pas un formulaire KYC.
 
-**Action, une seule fois, par un humain :** ouvrir <https://dashboard.stripe.com/connect> en **mode test**, compléter l'inscription Connect de la plateforme.
+Débloqué immédiatement, sans un octet de code changé — création du compte Express, Account Link, `refresh_url`/`return_url`, relecture du statut, `charges_enabled`, `payouts_enabled`, `requirements` :
 
-**Ce que cela débloquera immédiatement**, sans changement de code : création du compte Express, Account Link, `refresh_url`/`return_url`, onboarding incomplet, relecture du statut, `charges_enabled`, `payouts_enabled`, `requirements`, et les webhooks `account.updated` / `transfer.*` / `payout.*`.
+```
+account created: acct_… | type express | charges false | payouts false
+requirements due: ["business_type","external_account","tos_acceptance.date","tos_acceptance.ip"]
+account link: https://connect.stripe.com/setup/e/acct_…
+```
 
-**Non simulé.** Aucune de ces assertions n'est marquée verte : la section est rapportée `⊘ non exécutable`.
+### 9.2 Terminer l'onboarding Express dans le formulaire hébergé — **seule action humaine restante**
 
-### 9.2 Terminer l'onboarding Express dans le formulaire hébergé
+Les champs restants (`business_type`, `external_account`, `tos_acceptance`) ne peuvent **pas** être renseignés par l'API sur un compte Express : Stripe les collecte sur son propre formulaire, et c'est le point de l'architecture — TowConnect ne voit jamais ces données.
 
-Même une fois Connect activé, les champs d'identité et le compte bancaire d'un compte **Express** ne peuvent pas être renseignés par l'API : Stripe les collecte sur son propre formulaire. Il faudra ouvrir l'Account Link dans un navigateur et saisir les valeurs de test documentées par Stripe. C'est la seule étape manuelle restante de la chaîne Connect.
+**Ce que cela demande :** ouvrir l'Account Link depuis l'onglet Finances d'une compagnie (bouton « Configurer les versements »), et remplir le formulaire Stripe avec ses valeurs de test documentées.
+
+**Pourquoi je ne l'ai pas fait à votre place :** ce formulaire collecte un numéro de compte bancaire et un identifiant personnel. Même en sandbox, je ne saisis pas ce type de donnée dans un champ — c'est une règle que je n'assouplis pas, et la valeur de test ressemble trait pour trait à la vraie.
+
+**Ce que cela débloquera ensuite :** `charges_enabled` / `payouts_enabled` à `true`, la disparition des `requirements`, le webhook `account.updated`, et la possibilité de tester un vrai transfert sandbox vers le compte connecté — c'est-à-dire de faire passer §10 de `payout prepared internally` à `payout executed by Stripe`.
 
 ### 9.3 Décider si un supplément approuvé doit pouvoir être encaissé
 
@@ -260,6 +268,7 @@ Toujours entièrement ouvert. Aucune décision n'a été prise ni enregistrée.
 | Comptes fixtures | 0 |
 | Comptes avec `role = 'admin'` | 1 (le compte réel du projet) |
 | Autorisations Stripe ouvertes | 0 — toutes annulées, encaissées ou remboursées |
+| Comptes connectés restants chez Stripe | 0 — les comptes Express fixtures sont supprimés au nettoyage |
 | **Journal d'audit conservé** | **79 lignes** |
 | **Événements webhook conservés** | **109 lignes** |
 
@@ -280,22 +289,22 @@ Les deux dernières lignes sont conservées volontairement : ce sont les preuves
 | `npm run verify:phase6_1` | ✅ 32 |
 | `npm run verify:phase7` | ✅ 24 |
 | `npm run verify:finance` | ✅ **13** (nouveau) |
-| `npm run test:finance` | ✅ **99 exécutées, 0 échec, 1 action humaine** (nouveau) |
+| `npm run test:finance` | ✅ **107 exécutées, 0 échec, 1 action humaine** (nouveau) |
 
 ---
 
 ## PHASE 7.1 FINANCIAL VALIDATION COMPLETE
 
-* **Connect E2E** — ⊘ **non exécutable** : Stripe Connect n'est pas activé sur le compte plateforme. Le code de création de compte, d'Account Link et de relecture de statut n'a donc pas pu être exercé. Rien n'a été simulé.
+* **Connect E2E** — ✅ **exécuté réellement**. Connect activé en sandbox (modèle Marketplace) pendant cette phase. Compte Express canadien créé par l'application, Account Link généré, `charges_enabled`/`payouts_enabled` à `false` et `requirements` non vide relus **chez Stripe** et comparés à ce que nous stockons — identiques. Reste hors automatisation : le formulaire hébergé d'identité et de compte bancaire (§9.2).
 * **Course + frozen economics** — ✅ exécuté réellement. Prix client 45,00 $ ; 36,90 $ / 6,49 $ / 1,61 $ gelés à l'acceptation, avec `pricing_config_id`, version et horodatage. Un changement de taux à 40 % n'a rien reprisé.
 * **Ledger** — ✅ exécuté réellement. Une seule écriture par course, égale au montant gelé, payable seulement après encaissement ; rejeu sans double crédit ; soldes dérivés réconciliés exactement.
 * **Supplements** — ✅ exécuté (chemin `uncollected`). Le chauffeur ne peut pas auto-approuver ; le client n'est pas débité sans approbation ; un supplément non collecté ne crédite rien. Le chemin « autorisation incrémentale » est **indisponible sur ce compte Stripe** (§4).
 * **Refunds** — ✅ exécuté réellement, partiel **et** total. Reprise partenaire proportionnelle par écriture négative, écriture d'origine intacte, rejeu de webhook dédupliqué.
 * **Payout status** — ✅ **`payout prepared internally`**. ❌ **pas** `payout executed by Stripe` : aucun appel `transfers.create`/`payouts.create` n'existe dans Phase 7.
-* **Tests** — 99 assertions E2E, 178 RLS, 60 unitaires, 37 + 32 + 24 + 13 vérifications d'effet en base. `tsc`, `lint`, `build` propres.
+* **Tests** — 107 assertions E2E, 178 RLS, 60 unitaires, 37 + 32 + 24 + 13 vérifications d'effet en base. `tsc`, `lint`, `build` propres.
 * **Commission active finale : `NO`**
-* **Blockers** — un seul, externe et non technique : **activer Stripe Connect en mode test sur le compte plateforme**. Il bloque la validation Connect et tout versement réel, mais rien d'autre de la chaîne financière.
+* **Blockers** — **aucun blocage technique**. Deux dettes connues, toutes deux documentées et aucune n'empêchant Phase 8 : le formulaire hébergé d'onboarding Express reste à remplir par un humain (§9.2), et un supplément approuvé ne peut pas être encaissé sur ce compte Stripe (§4).
 
 **Verdict : SAFE TO START PHASE 8**
 
-— avec la réserve explicite que la partie **Connect / versement réel** de Phase 7 reste **non validée end-to-end** tant que le point 9.1 n'est pas fait, et que la collecte d'un supplément approuvé est aujourd'hui **impossible** sur ce compte (§4). Ni l'une ni l'autre n'empêche Phase 8 ; les deux doivent être portées comme dette connue, pas découvertes plus tard.
+— la chaîne Connect est désormais validée jusqu'au point exact où Stripe exige une personne : compte créé, lien généré, exigences lues, statut relu à la source. Ce qui reste est un formulaire, pas du code.
