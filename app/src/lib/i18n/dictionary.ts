@@ -227,6 +227,30 @@ export const dictionary = {
     // Deliberately says nothing about WHICH of the two was wrong: telling
     // somebody the address exists is telling anybody who asks.
     err_bad_credentials: 'Courriel ou mot de passe incorrect.',
+
+    // Récupération de mot de passe. La réponse après envoi est volontairement
+    // identique que le compte existe ou non : un formulaire qui distingue les
+    // deux cas répond « cette personne a-t-elle un compte ? » à qui le demande.
+    forgot_link: 'Mot de passe oublié ?',
+    forgot_title: 'Mot de passe oublié',
+    forgot_sub:
+      'Entrez le courriel de votre compte. Si un compte existe, nous vous envoyons un lien pour choisir un nouveau mot de passe.',
+    forgot_submit: 'Envoyer le lien',
+    forgot_sent:
+      'Si un compte existe pour cette adresse, un lien vient d’être envoyé. Vérifiez votre boîte de réception.',
+    forgot_sent_hint:
+      'Le lien expire après un moment et ne peut servir qu’une fois. Pensez à regarder dans les indésirables.',
+    reset_title: 'Nouveau mot de passe',
+    reset_sub: 'Choisissez un mot de passe d’au moins 8 caractères.',
+    reset_new: 'Nouveau mot de passe',
+    reset_confirm: 'Confirmez le mot de passe',
+    reset_submit: 'Enregistrer',
+    reset_done: 'Mot de passe modifié. Nous vous emmenons à votre compte…',
+    reset_mismatch: 'Les deux mots de passe ne sont pas identiques.',
+    reset_too_short: 'Le mot de passe doit contenir au moins 8 caractères.',
+    reset_unchanged: 'Ce mot de passe est déjà le vôtre. Choisissez-en un autre.',
+    reset_link_expired:
+      'Ce lien n’est plus valide — il a expiré ou il a déjà servi. Demandez-en un nouveau.',
     err_signup_failed:
       "Ce compte n'a pas pu être créé. Le courriel est peut-être déjà utilisé, ou le mot de passe trop court (8 caractères minimum).",
     err_not_permitted: "Vous n'avez pas accès à cette action.",
@@ -560,6 +584,26 @@ export const dictionary = {
       'The payment could not be processed. You have not been charged. Try again in a moment.',
     err_signed_out: 'Your session has expired. Sign in again to continue.',
     err_bad_credentials: 'Email or password is incorrect.',
+
+    forgot_link: 'Forgot your password?',
+    forgot_title: 'Forgot your password',
+    forgot_sub:
+      'Enter your account email. If an account exists, we will send a link to choose a new password.',
+    forgot_submit: 'Send the link',
+    forgot_sent: 'If an account exists for that address, a link is on its way. Check your inbox.',
+    forgot_sent_hint:
+      'The link expires after a while and can only be used once. It is worth checking your spam folder.',
+    reset_title: 'New password',
+    reset_sub: 'Choose a password of at least 8 characters.',
+    reset_new: 'New password',
+    reset_confirm: 'Confirm the password',
+    reset_submit: 'Save',
+    reset_done: 'Password changed. Taking you to your account…',
+    reset_mismatch: 'The two passwords do not match.',
+    reset_too_short: 'The password must be at least 8 characters.',
+    reset_unchanged: 'That is already your password. Choose a different one.',
+    reset_link_expired:
+      'That link is no longer valid — it has expired or has already been used. Ask for a new one.',
     err_signup_failed:
       'That account could not be created. The email may already be in use, or the password may be too short (8 characters minimum).',
     err_not_permitted: 'You do not have access to this action.',

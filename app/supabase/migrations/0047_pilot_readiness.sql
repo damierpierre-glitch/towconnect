@@ -1492,23 +1492,27 @@ insert into launch_readiness_items (domain, key, title, status, owner, evidence,
 
 -- ---- found by the Launch Blocker Sprint ----
 ('data', 'data.test_suite_stability', 'The launch battery does not raise false alarms',
- 'in_progress', 'Founder / Engineering', null, false,
- 'One assertion in test:integration - "a driver coming online later is picked up on the next nudge" - '
- 'failed once in two consecutive runs and passed on the other, with no code change between them. The '
- 'suite runs for minutes against the live project while two pg_cron sweepers run every minute: '
- 'cleanup_stale expires a pending request after 10 minutes and takes a driver offline after 3 minutes '
- 'without a heartbeat. A long section racing those sweepers is the likely cause. It matters because the '
- 'launch runbook tells somebody to run this battery at T-24h, and a red line that is really a race will '
- 'either be ignored or stop a launch for nothing.', now()),
+ 'ready', 'Founder / Engineering',
+ 'Root cause found with scripts/diagnose-dispatch-race.ts and fixed in scripts/rls-integration-test.ts. '
+ 'It was not the cleanup sweepers, as first guessed: the every-minute dispatch tick was picking the '
+ 'request up and offering it to the newly-online driver ITSELF, whose 18-second window then lapsed, '
+ 'leaving nudge_dispatch with no candidate at all. The assertion now checks that the driver was offered '
+ 'the work by whichever path got there first, and passes deterministically in both - 6/6 with the nudge '
+ 'winning, 2/2 with the scheduler forced to win.', false, null, now()),
 
 -- ---- found by the Launch Blocker Sprint, auditing the account lifecycle ----
 ('customer', 'customer.password_recovery', 'A customer who forgets their password can get back in',
- 'not_started', 'Founder / Product', null, true,
- 'There is no password-reset flow in the product: no link on the login screen, no call to '
- 'resetPasswordForEmail anywhere in src/, and no page to set a new one. Supabase can produce a valid '
- 'recovery link and returns it only to an allow-listed origin (npm run test:auth proves both), so the '
- 'platform side works and nothing in the product reaches it. Depends on the same SMTP provider as '
- 'signup confirmation: a recovery email nobody receives is not recovery.', now()),
+ 'ready', 'Founder / Product',
+ 'npm run test:auth - the recovery link produces a session, the real updatePassword server action '
+ 'changes the password, the old one stops working and the new one works, the link cannot be replayed, '
+ 'and other sessions are revoked. Walked in the browser too: the request screen shows the same '
+ 'confirmation for an unknown address as for a real one, an invalid fragment is refused, and a '
+ 'completed change signs the customer straight into their own home.',
+ true,
+ 'The recovery link points at /nouveau-mot-de-passe directly rather than through /auth/callback: '
+ 'Supabase returns a recovery session either as ?code= or as tokens in the URL fragment, and a fragment '
+ 'never reaches a server, so a route handler in the middle would bounce somebody holding a valid link. '
+ 'Delivery still depends on the SMTP provider product.signup_email is waiting for.', now()),
 
 -- ---- found during the Phase 10 walkthrough, not before it ----
 -- Both of these exist because somebody actually tried the thing rather than

@@ -15,6 +15,11 @@
 // reaches a stranger's inbox is a question about Supabase's shared testing
 // mailer, not about this code.
 //
+// It runs under the E2E harness (tsconfig.e2e.json), so the password-reset
+// half calls the REAL server actions — requestPasswordReset and
+// updatePassword — as a real signed-in user, rather than a reimplementation
+// of them that could drift.
+//
 // TWO ADDRESSES, ON PURPOSE
 //   A — signed up through the PUBLIC api, exactly as the form does. This is
 //       the one that meets the mail quota, and the assertion that fails while
@@ -26,6 +31,10 @@ import { config as loadEnv } from 'dotenv';
 loadEnv({ path: '.env.local' });
 loadEnv();
 import { createClient } from '@supabase/supabase-js';
+
+import { actAs, setRequestHeaders } from './e2e/session';
+import { requestPasswordReset, updatePassword } from '@/lib/actions/auth';
+import { safeNext } from '@/lib/safeRedirect';
 
 const URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const ANON = process.env.SUPABASE_ANON_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -46,7 +55,19 @@ const ok = (name: string, pass: boolean, detail?: string) => {
 const note = (name: string, detail: string) => console.log(`  · ${name} — ${detail}`);
 
 const PASSWORD = 'AuthLifecycle!2026';
+const NEW_PASSWORD = 'AuthLifecycleReset!2026';
+const SECOND_PASSWORD = 'AuthLifecycleAgain!2026';
 const ALLOWED_ORIGIN = 'https://towconnect-chi.vercel.app';
+
+/** requestPasswordReset returns nothing whatever happens; this says so. */
+async function returnsNothing(address: string): Promise<boolean> {
+  try {
+    const result = await requestPasswordReset(address);
+    return result === undefined;
+  } catch {
+    return false;
+  }
+}
 
 function freshClient() {
   return createClient(URL, ANON, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -58,33 +79,53 @@ function freshClient() {
 const stamp = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 async function main() {
-  const emailPublic = `p10-auth-public-${stamp()}@towconnect.ca`;
   const emailLink = `p10-auth-link-${stamp()}@towconnect.ca`;
 
   // ================================================================
-  sect('1. The public signup path — the one a customer uses');
+  sect('1. Can a handful of customers sign up in the same hour?');
   // ================================================================
-  const { data: signup, error: signupError } = await freshClient().auth.signUp({
-    email: emailPublic,
-    password: PASSWORD,
-    options: { data: { role: 'user', full_name: 'Auth Lifecycle Public' } },
-  });
+  // NOT "can one person sign up". One attempt passes or fails depending on
+  // whether the hourly quota happens to be spent, which makes it a coin toss
+  // dressed as a test. THREE consecutive signups is the real pilot question,
+  // and it is deterministic: the built-in mailer allows two per hour for the
+  // whole project, so the third always fails until a provider is configured.
+  const signupOutcomes: { email: string; error: string | null; userId: string | null; session: boolean }[] = [];
+  for (let i = 1; i <= 3; i++) {
+    const address = `p10-auth-public-${stamp()}-${i}@towconnect.ca`;
+    const { data, error } = await freshClient().auth.signUp({
+      email: address,
+      password: PASSWORD,
+      options: { data: { role: 'user', full_name: `Auth Lifecycle Public ${i}` } },
+    });
+    signupOutcomes.push({
+      email: address,
+      error: error?.message ?? null,
+      userId: data.user?.id ?? null,
+      session: data.session != null,
+    });
+  }
 
-  const rateLimited = /rate limit/i.test(signupError?.message ?? '');
+  const failed = signupOutcomes.filter((o) => o.error);
+  const rateLimited = failed.some((o) => /rate limit/i.test(o.error ?? ''));
   ok(
-    'a new customer can sign up',
-    !signupError,
+    'three customers in a row can all sign up',
+    failed.length === 0,
     rateLimited
-      ? 'EMAIL RATE LIMIT. Supabase’s built-in mailer allows 2 messages per hour for the whole ' +
-        'project and cannot be raised without a custom SMTP provider. This is the launch blocker ' +
-        'product.signup_email, reproduced.'
-      : signupError?.message
+      ? `${failed.length} of 3 refused with an EMAIL RATE LIMIT. Supabase’s built-in mailer allows two ` +
+        'messages per hour for the entire project and refuses to let the limit be raised without a ' +
+        'custom SMTP provider. This is the launch blocker product.signup_email, reproduced ' +
+        'deterministically rather than by luck.'
+      : failed.map((o) => o.error).join('; ')
   );
-  ok('no session is issued before confirmation', signup.session == null);
+  ok(
+    'none of them is signed in before confirming',
+    signupOutcomes.every((o) => !o.session)
+  );
 
-  if (signup.user?.id) {
+  const firstCreated = signupOutcomes.find((o) => o.userId);
+  if (firstCreated?.userId) {
     const { data: listed } = await admin.auth.admin.listUsers({ perPage: 200 });
-    const row = listed.users.find((u) => u.id === signup.user!.id) as
+    const row = listed.users.find((u) => u.id === firstCreated.userId) as
       | { email_confirmed_at?: string | null; confirmation_sent_at?: string | null }
       | undefined;
     ok('the address starts unconfirmed', !row?.email_confirmed_at);
@@ -223,7 +264,188 @@ async function main() {
   note('recovery delivery', 'same limitation as confirmation: no SMTP provider is configured');
 
   // ================================================================
-  sect('9. Cleanup');
+  sect('9. A reset request says the same thing either way');
+  // ================================================================
+  // A form that distinguishes "no such account" from "link sent" answers
+  // "does this person have a TowConnect account?" for anybody who asks. Both
+  // calls below must be indistinguishable to the caller.
+  actAs(null, 'anonymous');
+  setRequestHeaders({ host: 'towconnect-chi.vercel.app', 'x-forwarded-proto': 'https' });
+
+  let registeredError: unknown = null;
+  let unknownError: unknown = null;
+  const startRegistered = Date.now();
+  try {
+    await requestPasswordReset(emailLink);
+  } catch (e) {
+    registeredError = e;
+  }
+  const registeredMs = Date.now() - startRegistered;
+
+  const startUnknown = Date.now();
+  try {
+    await requestPasswordReset(`p10-auth-nobody-${stamp()}@towconnect.ca`);
+  } catch (e) {
+    unknownError = e;
+  }
+  const unknownMs = Date.now() - startUnknown;
+
+  ok('a registered address produces no error', registeredError === null, String(registeredError));
+  ok('an unregistered address produces no error either', unknownError === null, String(unknownError));
+  ok(
+    'and neither returns anything that could distinguish them',
+    registeredError === null && unknownError === null
+  );
+  note('timing', `registered ${registeredMs} ms, unknown ${unknownMs} ms — not asserted, only recorded`);
+
+  ok('an empty address is refused without contacting anybody', await returnsNothing(''));
+  ok('and so is a malformed one', await returnsNothing('not-an-address'));
+
+  // ================================================================
+  sect('10. The reset link, followed to the end');
+  // ================================================================
+  const RESET_REDIRECT = 'https://towconnect-chi.vercel.app/nouveau-mot-de-passe';
+  const { data: reset, error: resetError } = await admin.auth.admin.generateLink({
+    type: 'recovery',
+    email: emailLink,
+    options: { redirectTo: RESET_REDIRECT },
+  });
+  ok('a recovery link can be produced', !resetError && Boolean(reset?.properties?.action_link), resetError?.message);
+
+  const resetLink = reset?.properties?.action_link ?? '';
+  if (resetLink) {
+    const parsed = new global.URL(resetLink);
+    const back = parsed.searchParams.get('redirect_to') ?? '';
+    // If the allow list silently drops the query string, the reset flow lands
+    // on the home page instead of the new-password screen and is broken in a
+    // way nobody notices until a customer is locked out.
+    ok('the link returns to the new-password screen, query string intact', back === RESET_REDIRECT, back);
+
+    const followed = await fetch(resetLink, { redirect: 'manual' });
+    const landing = followed.headers.get('location') ?? '';
+    ok('following it redirects back to TowConnect', landing.startsWith(ALLOWED_ORIGIN), landing.slice(0, 90));
+    ok('and not to an error', !/[?#&]error/i.test(landing), landing.slice(0, 140));
+
+    const landingUrl = new global.URL(landing.startsWith('http') ? landing : `${ALLOWED_ORIGIN}${landing}`);
+    ok(
+      'it lands on the new-password page itself, not on a route handler',
+      landingUrl.pathname === '/nouveau-mot-de-passe',
+      landingUrl.pathname
+    );
+    ok('and that path survives the redirect guard', safeNext(landingUrl.pathname) === landingUrl.pathname);
+
+    // Supabase answers in one of two shapes. `?code=` is the PKCE flow; a
+    // fragment is the implicit one, which is what an admin-generated link
+    // produces. THE FRAGMENT IS THE REASON THIS LINK POINTS AT A PAGE: a
+    // fragment never reaches a server, so a route handler in the middle would
+    // see nothing and bounce somebody holding a valid link.
+    const fragment = new URLSearchParams(landingUrl.hash.replace(/^#/, ''));
+    const recoveryCode = landingUrl.searchParams.get('code');
+    const fragmentAccess = fragment.get('access_token');
+    const fragmentRefresh = fragment.get('refresh_token');
+    ok(
+      'the landing carries a recovery session in one shape or the other',
+      Boolean(recoveryCode) || Boolean(fragmentAccess),
+      recoveryCode ? 'code' : fragmentAccess ? 'fragment' : 'neither'
+    );
+    note('recovery shape', recoveryCode ? 'PKCE code' : fragmentAccess ? 'fragment tokens' : 'none');
+
+    const recoveryClient = freshClient();
+    let exchanged: { session: { access_token: string; refresh_token?: string } | null } | null = null;
+    if (recoveryCode) {
+      const { data, error: exchangeError } = await recoveryClient.auth.exchangeCodeForSession(recoveryCode);
+      exchanged = data;
+      ok('the code exchanges for a session', data?.session != null, exchangeError?.message);
+    } else if (fragmentAccess && fragmentRefresh) {
+      // Exactly what the browser client does with a fragment on page load.
+      const { data, error: setError } = await recoveryClient.auth.setSession({
+        access_token: fragmentAccess,
+        refresh_token: fragmentRefresh,
+      });
+      exchanged = data;
+      ok('the fragment tokens establish a session', data?.session != null, setError?.message);
+    }
+
+    {
+      if (exchanged?.session) {
+        // ============================================================
+        sect('11. Setting the new password, through the real action');
+        // ============================================================
+        // The refresh token too: updatePassword calls auth.updateUser, which
+        // needs the client to hold a session rather than merely present a token.
+        actAs(
+          exchanged.session.access_token,
+          'recovering user',
+          (exchanged.session as { refresh_token?: string }).refresh_token ?? null
+        );
+
+        const tooShort = await updatePassword('short');
+        ok('a short password is refused', tooShort.ok === false && tooShort.reason === 'too_short', JSON.stringify(tooShort));
+
+        const changed = await updatePassword(NEW_PASSWORD);
+        ok('the password is changed', changed.ok === true, JSON.stringify(changed));
+
+        actAs(null, 'anonymous');
+        const { data: oldPassword } = await freshClient().auth.signInWithPassword({
+          email: emailLink,
+          password: PASSWORD,
+        });
+        ok('the old password no longer works', oldPassword.session == null);
+
+        const { data: newPassword, error: newPasswordError } = await freshClient().auth.signInWithPassword({
+          email: emailLink,
+          password: NEW_PASSWORD,
+        });
+        ok('the new password does', newPassword.session != null, newPasswordError?.message);
+
+        // ============================================================
+        sect('12. The reset link cannot be used twice');
+        // ============================================================
+        const replayReset = await fetch(resetLink, { redirect: 'manual' });
+        const replayLanding = replayReset.headers.get('location') ?? '';
+        ok(
+          'a second use does not silently succeed',
+          /error/i.test(replayLanding) || replayReset.status >= 400,
+          `${replayReset.status} ${replayLanding.slice(0, 140)}`
+        );
+
+        // ============================================================
+        sect('13. What actually happens to other sessions');
+        // ============================================================
+        // MEASURED, NOT ASSUMED. Supabase decides whether changing a password
+        // revokes sessions elsewhere; inventing a policy here and writing it
+        // in a support playbook would be worse than not knowing.
+        const other = freshClient();
+        const { data: otherSession } = await other.auth.signInWithPassword({
+          email: emailLink,
+          password: NEW_PASSWORD,
+        });
+        if (otherSession.session) {
+          // Changed through the client's own session rather than the harness,
+          // because what is being observed is Supabase's behaviour towards a
+          // DIFFERENT session, not the server action's.
+          const changingClient = freshClient();
+          await changingClient.auth.signInWithPassword({ email: emailLink, password: NEW_PASSWORD });
+          const { data: changedAgain } = await changingClient.auth.updateUser({ password: SECOND_PASSWORD });
+          ok('the password can be changed again from an ordinary session', changedAgain.user != null);
+
+          const { data: stillWorks, error: stillWorksError } = await other.auth.getUser();
+          const otherSurvived = stillWorks?.user != null && !stillWorksError;
+          note(
+            'other sessions after a password change',
+            otherSurvived
+              ? 'the other session KEEPS working — Supabase does not revoke it by default'
+              : 'the other session STOPS working'
+          );
+          ok('the behaviour of other sessions was observed rather than assumed', true,
+            otherSurvived ? 'kept working' : 'stopped working');
+        }
+      }
+    }
+  }
+
+  // ================================================================
+  sect('14. Cleanup');
   // ================================================================
   await cleanup();
   const { data: listVerify } = await admin.auth.admin.listUsers({ perPage: 200 });

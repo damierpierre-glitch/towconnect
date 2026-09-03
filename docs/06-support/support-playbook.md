@@ -68,3 +68,36 @@ During a pilot that number matters more than the job count.
 customer sees the reason an operator wrote. Repeat it as written; do not
 improvise a restart time. If they are in danger, 911 comes first and TowConnect
 second.
+
+
+---
+
+## "I never got the email"
+
+The two cases arrive with the same sentence and need different answers.
+
+**Creating an account.** Ask whether they saw a confirmation screen. Then
+check `confirmation_sent_at` on their user row: null means Supabase never
+handed the message to the mailer, which today almost always means the hourly
+quota is spent (two per hour, whole project). Say so plainly — *"our mail is
+rate-limited while we set up a provider, try again shortly"* — rather than
+sending them round the loop again.
+
+**Resetting a password.** The screen says the same thing whether or not the
+address has an account, on purpose. **Do not tell them whether it does.** If
+they insist, the honest line is that we cannot confirm whether an address has
+an account, for their protection as much as anybody's.
+
+Then: check spam, check the address for typos, and check the provider's own
+dashboard for a bounce. `03-operations/account-lifecycle.md` has the order.
+
+## "I have forgotten my password"
+
+Point them at **Mot de passe oublié ?** under the sign-in form. Support cannot
+reset a password, cannot send the link on their behalf, and cannot read the
+link — the flow is deliberately end-to-end between the customer and their
+mailbox.
+
+Two things worth telling them up front: the link works **once**, and changing
+the password **signs them out everywhere else**. Both are measured behaviours,
+not guesses.

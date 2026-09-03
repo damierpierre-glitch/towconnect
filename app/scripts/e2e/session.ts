@@ -11,12 +11,22 @@
 // production. An action that would be refused in the app is refused here.
 
 let accessToken: string | null = null;
+// Carried only when an action needs the client to hold a real SESSION rather
+// than just present a bearer token. auth.updateUser() is the case that
+// forced this: it reads the client's own session state, so a client built
+// with an Authorization header alone answers "Auth session missing".
+let refreshToken: string | null = null;
 let label = 'anonymous';
 let requestHeaders: Record<string, string> = { host: 'localhost:3000', 'x-forwarded-proto': 'http' };
 
-export function actAs(token: string | null, who: string): void {
+export function actAs(token: string | null, who: string, refresh?: string | null): void {
   accessToken = token;
+  refreshToken = refresh ?? null;
   label = who;
+}
+
+export function currentRefreshToken(): string | null {
+  return refreshToken;
 }
 
 export function currentToken(): string | null {

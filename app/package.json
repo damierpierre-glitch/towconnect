@@ -26,7 +26,7 @@
     "verify:phase10": "tsx scripts/verify-phase10.ts",
     "test:pilot": "tsx --tsconfig tsconfig.e2e.json scripts/pilot-e2e.ts",
     "measure:bundles": "tsx scripts/measure-bundles.ts",
-    "test:auth": "tsx scripts/auth-email-e2e.ts",
+    "test:auth": "tsx --tsconfig tsconfig.e2e.json scripts/auth-email-e2e.ts",
     "audit:auth": "tsx scripts/audit-auth-email.ts",
     "audit:webhooks": "tsx scripts/audit-webhook-endpoints.ts",
     "secret:fingerprint": "tsx scripts/secret-fingerprint.ts"

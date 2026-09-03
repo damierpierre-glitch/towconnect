@@ -102,6 +102,14 @@ export default function LoginPage() {
               {t('login_submit')}
             </Button>
           </form>
+          {/* Under the form rather than beside the password field: somebody
+              who is confidently signing in should not be offered a way out
+              before they have tried. */}
+          <p className="text-sm text-center mt-4">
+            <Link href="/mot-de-passe-oublie" className="text-text-2 hover:text-orange transition-colors">
+              {t('forgot_link')}
+            </Link>
+          </p>
           <div className="my-4 h-px bg-steel" />
           <Button type="button" variant="secondary" full onClick={handleGoogle}>
             {t('login_google')}

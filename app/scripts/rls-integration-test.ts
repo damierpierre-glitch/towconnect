@@ -770,10 +770,47 @@ async function run(): Promise<Result[]> {
       const { data: lateOffer, error: lateOfferError } = await requester.client.rpc('nudge_dispatch', {
         p_request_id: requestId,
       });
+
+      // WHY THIS ASSERTION IS ABOUT THE OUTCOME AND NOT ABOUT WHO PRODUCED IT
+      //
+      // This line used to read `lateOffer.driver_id === lateDriver.id` and
+      // failed roughly one run in three, always with "got null". Diagnosed in
+      // Launch Blocker Sprint 2 (scripts/diagnose-dispatch-race.ts): the
+      // dispatch-tick cron runs every minute against the same live project,
+      // and in the few hundred milliseconds between this driver coming online
+      // and the nudge below, the scheduler can pick the request up and offer
+      // it to them ITSELF. Its 18-second window then lapses, the offer is
+      // marked `timeout`, and by the time nudge_dispatch runs there is no
+      // candidate left — every driver is `already_offered_this_request`, so it
+      // correctly returns null.
+      //
+      // Nothing was broken. The old assertion tested WHO delivered the offer,
+      // which the test does not control and does not care about; the invariant
+      // it exists to protect is that a driver who comes online after the pool
+      // was exhausted gets considered and offered the work. That holds
+      // whichever of the two paths gets there first, and it is deterministic:
+      // once the offer row exists it stays.
+      //
+      // Deliberately NOT fixed by disabling the scheduler, sleeping, or
+      // retrying — all three would hide a real failure just as effectively as
+      // this race hid nothing.
+      const nudgedDriverId = (lateOffer as { driver_id?: string | null } | null)?.driver_id ?? null;
+      const { data: offersToLateDriver } = await admin
+        .from('dispatch_offers')
+        .select('status, offered_at')
+        .eq('request_id', requestId)
+        .eq('driver_id', lateDriver.id);
+      const lateDriverWasOffered = nudgedDriverId === lateDriver.id || (offersToLateDriver ?? []).length > 0;
+      const deliveredBy =
+        nudgedDriverId === lateDriver.id
+          ? 'the nudge'
+          : (offersToLateDriver ?? []).length > 0
+            ? `the dispatch-tick scheduler (offer status '${offersToLateDriver![0].status}')`
+            : 'nobody';
       results.push({
-        name: 'a driver coming online later is picked up on the next nudge',
-        pass: !lateOfferError && lateOffer?.driver_id === lateDriver.id,
-        detail: lateOfferError?.message ?? `expected driver ${lateDriver.id}, got ${lateOffer?.driver_id}`,
+        name: 'a driver coming online later is picked up and offered the work',
+        pass: !lateOfferError && lateDriverWasOffered,
+        detail: lateOfferError?.message ?? `delivered by ${deliveredBy}`,
       });
     }
 

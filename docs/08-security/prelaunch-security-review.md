@@ -215,3 +215,41 @@ need to be.
 Everything in the table above this addendum. The email rate limit moved from
 "accepted risk" to a named launch blocker with a costed human action, which is
 where it belonged.
+
+
+---
+
+## Addendum — Launch Blocker Sprint 2 (2026-09-03)
+
+### Password recovery, built and attacked
+
+| Property | Result |
+| --- | --- |
+| Enumeration | The reset request returns **nothing** — no boolean, no error, no different screen — for a registered address and an unregistered one alike. Verified in the browser as well: an address nobody owns produces the same confirmation |
+| Failure leakage | Provider errors, including a spent mail quota, are logged and swallowed. A rate-limit message reaching the browser would tell an enumerator their guess did something |
+| Token reuse | The reset link is single use; a second visit does not silently succeed |
+| Redirect | The link returns only to an allow-listed origin, and the landing path is re-checked by `safeNext` |
+| Session after change | **Other sessions stop working.** Measured, not assumed: a second session is established, the password is changed from the first, and the second is observed to fail |
+| Password floor | Eight characters, enforced in the server action rather than only in the form |
+
+### `?next=` hardened
+
+`/auth/callback` used to concatenate an attacker-controllable `next` onto the
+origin. It now goes through `safeNext`, which refuses an absolute URL, a
+**protocol-relative** `//host` (the one that catches people out — concatenated
+onto an origin it still looks like a path), a backslash, and any whitespace or
+control character. Six hostile inputs are unit-tested.
+
+### The recovery link does not pass through a route handler
+
+Supabase returns a recovery session as `?code=` **or as tokens in the URL
+fragment**. A fragment never reaches a server. Routing the link through
+`/auth/callback` would therefore have bounced anybody whose link arrived in the
+fragment form — a self-inflicted denial of recovery. The link points at the
+page instead.
+
+### Secrets
+
+Unchanged and still clean. Nothing in this sprint printed, logged, committed or
+copied a credential; no SMTP credential exists yet to mishandle, and when one
+does it will live in Supabase rather than in this repository.

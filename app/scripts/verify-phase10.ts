@@ -362,6 +362,37 @@ async function main() {
     'a blocked CDN must not turn a confirmation email into an empty box'
   );
 
+  // ---- 9c. password recovery exists and is reachable -----------------
+  // Sprint 1 found that Supabase could produce a recovery link and nothing in
+  // the product reached it. These check that the two screens exist, that the
+  // login page offers the first one, and that the redirect guard is wired in.
+  const forgotPage = join(SRC, 'app/(auth)/mot-de-passe-oublie/page.tsx');
+  const resetPage = join(SRC, 'app/(auth)/nouveau-mot-de-passe/page.tsx');
+  check('the forgotten-password screen exists', existsSync(forgotPage));
+  check('the new-password screen exists', existsSync(resetPage));
+
+  const loginPage = readFileSync(join(SRC, 'app/(auth)/login/page.tsx'), 'utf8');
+  check(
+    'the login screen offers a way out',
+    loginPage.includes('/mot-de-passe-oublie'),
+    'a recovery flow nothing links to is a recovery flow nobody finds'
+  );
+
+  const authActions = readFileSync(join(SRC, 'lib/actions/auth.ts'), 'utf8');
+  check('the reset request goes through a server action', /resetPasswordForEmail/.test(authActions));
+  check(
+    'and it returns nothing, so it cannot leak whether an account exists',
+    /Promise<void>/.test(authActions),
+    'an answer that differs between a known and an unknown address is an enumeration oracle'
+  );
+
+  const callback = readFileSync(join(SRC, 'app/auth/callback/route.ts'), 'utf8');
+  check(
+    'the auth callback validates where it is being sent',
+    /safeNext\(/.test(callback),
+    'concatenating an attacker-supplied ?next= onto an origin is how open redirects happen'
+  );
+
   // ---- 10. no secret in the tree or the recent history ---------------
   // Patterns only. A match is reported by FILE, never by value.
   const SECRET_PATTERNS: { name: string; pattern: RegExp }[] = [
