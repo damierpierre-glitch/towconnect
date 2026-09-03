@@ -247,6 +247,7 @@ async function main() {
   // ---- 8. the documents that Phase 10 promises -----------------------
   const REQUIRED_DOCS = [
     '02-product/pilot-territory.md',
+    '03-operations/account-lifecycle.md',
     '04-finance/stripe-live-readiness.md',
     '05-data/analytics-events.md',
     '05-data/pilot-review-pack.md',
@@ -328,6 +329,37 @@ async function main() {
     'the legal drafts carry their banner in both languages',
     /LEGAL_DRAFT_BANNER/.test(publicPages) &&
       (publicPages.match(/banner: LEGAL_DRAFT_BANNER/g) ?? []).length === 6
+  );
+
+  // ---- 9b. the transactional emails ---------------------------------
+  // They are applied to the project through the Management API, which means
+  // the live copy is a setting in a dashboard — the classic place for text to
+  // drift from the product. The canonical version is in the repository so it
+  // can be reviewed, and checked here so it stays honest.
+  const templatesPath = join(process.cwd(), 'supabase/auth-templates/templates.ts');
+  const templates = existsSync(templatesPath) ? readFileSync(templatesPath, 'utf8') : '';
+  check('the transactional email templates are versioned in the repository', templates.length > 0);
+  for (const key of [
+    'mailer_templates_confirmation_content',
+    'mailer_templates_recovery_content',
+    'mailer_templates_magic_link_content',
+  ]) {
+    check(`the ${key.replace('mailer_templates_', '').replace('_content', '')} email exists`, templates.includes(key));
+  }
+  check(
+    'every template links through Supabase’s own confirmation URL',
+    (templates.match(/\{\{ \.ConfirmationURL \}\}/g) ?? []).length >= 3,
+    'a hand-built link would not carry a valid token'
+  );
+  check(
+    'the email button uses the accessible orange, not the brand one',
+    templates.includes('#cc4400') && !/background:#ff5c1a/.test(templates),
+    'white on #ff5c1a measures 3.09:1 — an email and a screen must not disagree about this'
+  );
+  check(
+    'no template carries an external image or stylesheet',
+    !/<img|https?:\/\/[^"']*\.(png|jpg|css)/i.test(templates),
+    'a blocked CDN must not turn a confirmation email into an empty box'
   );
 
   // ---- 10. no secret in the tree or the recent history ---------------

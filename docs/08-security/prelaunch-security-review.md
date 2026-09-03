@@ -167,3 +167,51 @@ check is that nothing *else* holds one. Clean at the time of this review.
 
 The last one is a **launch blocker**, not merely an accepted risk: a first
 customer who cannot confirm their email cannot request a tow.
+
+
+---
+
+## Addendum — Launch Blocker Sprint 1 (2026-09-03)
+
+### Comparing a secret without seeing it
+
+`npm run secret:fingerprint STRIPE_WEBHOOK_SECRET` prints `missing`, or
+`configured` with the prefix, the length and a salted SHA-256 truncated to
+twelve hex characters. Two environments holding the same value produce the
+same fingerprint; the fingerprint cannot be turned back into the value.
+
+That exists because "are these the same?" is normally answered by printing
+both and looking, which puts a live credential into a terminal, a scrollback
+buffer, and anywhere somebody pastes it afterwards.
+
+**Nothing in this sprint printed, logged, committed or copied a secret.** The
+Stripe endpoint secret was never read at all — it could not be, and did not
+need to be.
+
+### The webhook endpoint, re-reviewed
+
+- Exactly one enabled endpoint exists, pointing at the production deployment.
+- Zero events pending delivery over the last 24 hours, which is Stripe's own
+  evidence that the deployment holds that endpoint's secret.
+- The handler refuses a missing signature (400), a forged signature (400), and
+  a missing secret (503). All three are now asserted by `npm run test:finance`
+  rather than read in the source.
+
+### The account lifecycle, reviewed
+
+- No session is issued before confirmation.
+- Signing in before confirming is refused and names the reason.
+- A confirmation link is single use.
+- **A redirect cannot be pointed off-site**: asked with
+  `attacker.example.net` and refused, falling back to the allow-listed origin.
+- `localhost` is deliberately not in the redirect allow list. Every entry is a
+  place an authentication code can be delivered to, and a local origin on a
+  victim's machine is a place an attacker can listen.
+- Password recovery produces a valid, correctly-scoped link — and **nothing in
+  the product reaches it.** Recorded as `customer.password_recovery`.
+
+### Still accepted, unchanged
+
+Everything in the table above this addendum. The email rate limit moved from
+"accepted risk" to a named launch blocker with a costed human action, which is
+where it belonged.

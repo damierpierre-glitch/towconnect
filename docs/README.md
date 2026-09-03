@@ -35,6 +35,8 @@ Every change from here on asks, before it merges:
 - does it change a **public claim**? → `src/lib/content/publicPages.ts`, and
   `verify:phase10` will fail on a promise the system cannot keep
 - does it change an **analytics event**? → `05-data/analytics-events.md`
+- does it change **how somebody signs up or gets back in**? →
+  `03-operations/account-lifecycle.md`
 - does it change **who may operate, or where**? → `02-product/pilot-territory.md`
 
 Code and documentation drifting apart is how a knowledge base becomes a liability

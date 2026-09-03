@@ -1490,15 +1490,39 @@ insert into launch_readiness_items (domain, key, title, status, owner, evidence,
  'No real towing company has been onboarded. The only company in the database is the Phase 8.1 Connect '
  'test fixture. Supply first: there is nothing to launch to customers until this is non-zero.', now()),
 
+-- ---- found by the Launch Blocker Sprint ----
+('data', 'data.test_suite_stability', 'The launch battery does not raise false alarms',
+ 'in_progress', 'Founder / Engineering', null, false,
+ 'One assertion in test:integration - "a driver coming online later is picked up on the next nudge" - '
+ 'failed once in two consecutive runs and passed on the other, with no code change between them. The '
+ 'suite runs for minutes against the live project while two pg_cron sweepers run every minute: '
+ 'cleanup_stale expires a pending request after 10 minutes and takes a driver offline after 3 minutes '
+ 'without a heartbeat. A long section racing those sweepers is the likely cause. It matters because the '
+ 'launch runbook tells somebody to run this battery at T-24h, and a red line that is really a race will '
+ 'either be ignored or stop a launch for nothing.', now()),
+
+-- ---- found by the Launch Blocker Sprint, auditing the account lifecycle ----
+('customer', 'customer.password_recovery', 'A customer who forgets their password can get back in',
+ 'not_started', 'Founder / Product', null, true,
+ 'There is no password-reset flow in the product: no link on the login screen, no call to '
+ 'resetPasswordForEmail anywhere in src/, and no page to set a new one. Supabase can produce a valid '
+ 'recovery link and returns it only to an allow-listed origin (npm run test:auth proves both), so the '
+ 'platform side works and nothing in the product reaches it. Depends on the same SMTP provider as '
+ 'signup confirmation: a recovery email nobody receives is not recovery.', now()),
+
 -- ---- found during the Phase 10 walkthrough, not before it ----
 -- Both of these exist because somebody actually tried the thing rather than
 -- reading the code that implements it.
 ('product', 'product.signup_email', 'A first customer can confirm their email and sign in',
  'blocked', 'Founder / Engineering', null, true,
- 'Signing up through the real form returns "email rate limit exceeded" (HTTP 429). Supabase''s built-in '
- 'SMTP is throttled to a handful of messages per hour and is documented as unsuitable for production. No '
- 'custom SMTP provider is configured. A customer who cannot confirm their address cannot request a tow.',
- now()),
+ 'Reproduced and named by npm run test:auth, which fails on exactly this. Root cause, in Supabase''s own '
+ 'words: the project is on the free tier with the default email provider, so rate_limit_email_sent is 2 '
+ 'messages per hour for the WHOLE project, and the Management API refuses template changes with "Email '
+ 'template modification is not available for free tier projects using the default email provider". Two '
+ 'customers per hour is not a pilot. REMAINING HUMAN ACTION: create an account with a transactional email '
+ 'provider (Resend, Brevo and Postmark all have free tiers), verify a sending domain, enter the SMTP '
+ 'settings under Authentication > Emails, raise rate_limit_email_sent, then apply '
+ 'supabase/auth-templates/templates.ts. Everything after delivery is already proven.', now()),
 ('security', 'security.analytics_rate_limit', 'The analytics endpoint is rate-limited per source',
  'not_started', 'Founder / Engineering', null, false,
  'record_product_event() is reachable without a session because a landing view happens before anybody '
@@ -1510,11 +1534,16 @@ insert into launch_readiness_items (domain, key, title, status, owner, evidence,
  'has_admin_capability(''operations''); docs/08-security/prelaunch-security-review.md, finding 1',
  true, null, now()),
 ('finance', 'finance.webhook_secret_parity',
- 'The webhook signing secret is the same locally and in the deployment',
- 'blocked', 'Founder / Engineering', null, true,
- 'The finance suite signs a replay with the local STRIPE_WEBHOOK_SECRET and the deployed endpoint '
- 'rejects it with "Invalid signature". Real Stripe events ARE being processed, so the deployment holds '
- 'the correct endpoint secret and the local .env.local has drifted. Consequence: the two assertions '
- 'that prove a replayed event is deduplicated in production cannot run.', now())
+ 'The webhook endpoint''s signing secret is correct wherever it is used',
+ 'ready', 'Founder / Engineering',
+ 'npm run test:finance — the deployed endpoint refuses an unsigned request and a forged one, Stripe '
+ 'reports zero events pending delivery over 24h (which only happens when the deployment holds the '
+ 'endpoint''s own secret), exactly one enabled endpoint exists and points at the deployment under test, '
+ 'and the handler refuses to run at all with no secret configured.',
+ true,
+ 'Reframed rather than patched. Stripe never returns an endpoint secret after creation, so local and '
+ 'deployment cannot be reconciled by any script. The signed replay now runs against the route handler '
+ 'in-process, where signing and verification share one secret; the deployment is tested without needing '
+ 'any secret at all. The local STRIPE_WEBHOOK_SECRET deliberately no longer participates.', now())
 
 on conflict (key) do nothing;

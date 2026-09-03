@@ -39,6 +39,7 @@ import {
   quoteProviderCompensation,
 } from '@/lib/actions/economics';
 import { createRequest, cancelRequest } from '@/lib/actions/requests';
+import { POST as webhookHandler } from '@/app/api/stripe/webhook/route';
 
 // Since Phase 10, createRequest() can answer with a refusal instead of a
 // request — the pilot gate (0047). Every fixture below runs with the pilot
@@ -131,6 +132,26 @@ let adminTokenForCleanup: string | null = null;
  * demand, and idempotency is exactly the property that only shows up on a
  * second delivery.
  */
+// Replay a real Stripe event through the webhook handler.
+//
+// WHY IN-PROCESS RATHER THAN OVER HTTP
+// This used to POST a self-signed payload at the deployed endpoint, which
+// only works while the local STRIPE_WEBHOOK_SECRET happens to be the same
+// value the deployment holds. Those are two different environments with no
+// mechanism keeping them equal, and when they drifted these assertions began
+// reporting "Invalid signature" — which reads like a security failure and was
+// an environment one.
+//
+// Stripe never returns an endpoint's signing secret after creation, so the
+// two cannot be reconciled by any script. Calling the route handler directly
+// removes the question: the signature is made and verified with the same
+// secret, and what is under test — verification, idempotency, and the absence
+// of a second financial effect — is the handler's behaviour, which is what
+// these assertions were always about.
+//
+// The deployment is still tested, twice, and without needing any secret at
+// all: it must reject an unsigned request and a forged one (below), and
+// Stripe's own delivery record must show it accepting genuine events.
 async function replayEvent(eventId: string): Promise<{ status: number; body: string }> {
   const event = await stripe.events.retrieve(eventId);
   const payload = JSON.stringify(event);
@@ -139,13 +160,28 @@ async function replayEvent(eventId: string): Promise<{ status: number; body: str
     .update(`${timestamp}.${payload}`, 'utf8')
     .digest('hex');
 
+  const response = await webhookHandler(
+    new Request(WEBHOOK_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'stripe-signature': `t=${timestamp},v1=${signature}`,
+      },
+      body: payload,
+    })
+  );
+  return { status: response.status, body: (await response.text()).slice(0, 200) };
+}
+
+/** Post raw bytes at the DEPLOYED endpoint. Needs no secret, and must fail. */
+async function postToDeployedEndpoint(
+  body: string,
+  headers: Record<string, string>
+): Promise<{ status: number; body: string }> {
   const response = await fetch(WEBHOOK_ENDPOINT, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'stripe-signature': `t=${timestamp},v1=${signature}`,
-    },
-    body: payload,
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body,
   });
   return { status: response.status, body: (await response.text()).slice(0, 200) };
 }
@@ -958,21 +994,10 @@ async function main() {
         .eq('request_id', created.requestId);
 
       const first = await replayEvent(refundEventId);
-      // A 400 "Invalid signature" here is not a defect in the webhook — real
-      // Stripe events are arriving and being processed. It means the local
-      // STRIPE_WEBHOOK_SECRET no longer matches the secret configured on the
-      // deployed endpoint, so this test can no longer sign a payload that
-      // deployment will accept. Said explicitly, because "invalid signature"
-      // otherwise reads as a security failure rather than an env one.
-      const signatureMismatch = first.status === 400 && /Invalid signature/i.test(first.body);
       ok(
         'a correctly signed replay is accepted (the signature really verifies)',
         first.status === 200,
-        signatureMismatch
-          ? 'the local STRIPE_WEBHOOK_SECRET does not match the deployed endpoint. Real Stripe ' +
-            'events are still being processed; this suite simply cannot sign one that ' +
-            `${WEBHOOK_ENDPOINT} will accept. Copy the endpoint secret from the Stripe dashboard.`
-          : `${first.status} ${first.body}`
+        `${first.status} ${first.body}`
       );
       const second = await replayEvent(refundEventId);
       ok(
@@ -1007,6 +1032,85 @@ async function main() {
         .maybeSingle();
       ok('the event id is in the idempotency ledger exactly once', eventRow != null);
     }
+
+    // ---- the DEPLOYED endpoint, without needing any secret ----------
+    // Three questions the in-process replay above cannot answer, because it
+    // never leaves this machine: does the live endpoint refuse unsigned
+    // traffic, does it refuse a forgery, and does it hold the right signing
+    // secret. The first two are asked directly; the third is answered by
+    // Stripe's own delivery record, which is better evidence than anything
+    // this suite could construct.
+    // A handler with no secret must refuse rather than fall through. Checked
+    // by taking the secret away for one call and putting it back — the only
+    // way to exercise a branch that should never be reachable in production.
+    const heldSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    delete process.env.STRIPE_WEBHOOK_SECRET;
+    const noSecret = await webhookHandler(
+      new Request(WEBHOOK_ENDPOINT, {
+        method: 'POST',
+        headers: { 'stripe-signature': 't=1,v1=deadbeef' },
+        body: '{}',
+      })
+    );
+    process.env.STRIPE_WEBHOOK_SECRET = heldSecret;
+    ok(
+      'the handler refuses to run at all with no signing secret configured',
+      noSecret.status === 503,
+      String(noSecret.status)
+    );
+    ok(
+      'and the signing secret is back in place for the rest of the run',
+      process.env.STRIPE_WEBHOOK_SECRET === heldSecret
+    );
+
+    const unsigned = await postToDeployedEndpoint(JSON.stringify({ id: 'evt_forged', type: 'ping' }), {});
+    ok(
+      'the deployed endpoint refuses an unsigned request',
+      unsigned.status === 400,
+      `${unsigned.status} ${unsigned.body}`
+    );
+    ok('and says the signature was missing', /Missing signature/i.test(unsigned.body), unsigned.body);
+
+    const forged = await postToDeployedEndpoint(JSON.stringify({ id: 'evt_forged', type: 'ping' }), {
+      'stripe-signature': `t=${Math.floor(Date.now() / 1000)},v1=${'0'.repeat(64)}`,
+    });
+    ok(
+      'the deployed endpoint refuses a forged signature',
+      forged.status === 400,
+      `${forged.status} ${forged.body}`
+    );
+    ok('and says the signature was invalid', /Invalid signature/i.test(forged.body), forged.body);
+
+    // THE PARITY CHECK THAT REPLACED THE SECRET COMPARISON.
+    // Stripe signs every delivery with the endpoint's own secret. An event
+    // that is no longer pending is an event the deployment verified and
+    // accepted — so "the deployment holds the right secret" is answered by
+    // Stripe rather than asserted by us, and it keeps being answered every
+    // time this suite runs.
+    const dayAgo = Math.floor(Date.now() / 1000) - 24 * 3600;
+    const recentEvents = await stripe.events.list({ limit: 100, created: { gte: dayAgo } });
+    const stuck = recentEvents.data.filter((e) => (e.pending_webhooks ?? 0) > 0);
+    ok(
+      'Stripe has no event still pending delivery to the endpoint',
+      stuck.length === 0,
+      stuck.length
+        ? `${stuck.length} event(s) undelivered — the deployment is rejecting Stripe's signatures, ` +
+          'which means its STRIPE_WEBHOOK_SECRET is not the one on the endpoint'
+        : `${recentEvents.data.length} event(s) in 24h, all delivered`
+    );
+
+    const endpoints = await stripe.webhookEndpoints.list({ limit: 100 });
+    const live = endpoints.data.filter((e) => e.status === 'enabled');
+    ok(
+      'exactly one enabled endpoint is configured',
+      live.length === 1,
+      live.map((e) => e.url).join(', ')
+    );
+    ok(
+      'and it points at the deployment this suite tested',
+      live[0]?.url === WEBHOOK_ENDPOINT,
+      `${live[0]?.url} vs ${WEBHOOK_ENDPOINT}`
+    );
 
     // ================================================================
     sect('9. Cancellations');

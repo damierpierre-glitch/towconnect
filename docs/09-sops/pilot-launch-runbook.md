@@ -47,6 +47,10 @@ payment still captures at completion.
 ## T-24h
 
 1. `npm run test:integration` — 213 RLS assertions against the live database.
+1b. `npm run test:auth` — the account lifecycle end to end. **It fails while
+   there is no SMTP provider**, which is the point: it turns green the day a
+   customer can actually confirm their address. See
+   `03-operations/account-lifecycle.md`.
 2. `npm run verify:phase10` — the launch checklist, the gate, the analytics
    whitelist, the secret scan.
 3. Read the health screen. Every component `ok`. **A component reading

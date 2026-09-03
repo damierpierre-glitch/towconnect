@@ -73,3 +73,36 @@ Two facts that make the rest academic today: `pricing_configured()` returns
 `false`, so no job can be priced in production at all; and no Stripe transfer
 has ever executed, so *internal payout prepared* has never yet become *Stripe
 transfer executed*.
+
+
+---
+
+## How the webhook is verified, and by whom
+
+Every delivery is signed by Stripe with the endpoint's own secret and checked
+with `stripe.webhooks.constructEvent` against the **raw** body before anything
+is parsed. A missing signature is a 400, a forged one is a 400, and a handler
+with no secret configured refuses to run at all with a 503. The event id is
+inserted into `stripe_webhook_events` *before* any handling, so a retry is a
+no-op rather than a second financial effect.
+
+### One endpoint, one secret, and where each side is proven
+
+Stripe never returns an endpoint's signing secret after creation. Local and
+deployed environments therefore cannot be reconciled by any script, and trying
+to keep them equal by hand produced a failure that read as a security problem
+and was an environment one.
+
+So the two halves are proven separately, and `npm run test:finance` does both:
+
+| Question | How it is answered |
+| --- | --- |
+| Does the handler verify, accept and deduplicate correctly? | The signed replay runs **in-process** against the route handler, where signing and verification share one secret |
+| Does the live endpoint refuse unsigned and forged traffic? | Posted at the deployment directly — needs no secret |
+| Does the deployment hold the endpoint's own secret? | **Stripe's delivery record**: zero events pending delivery over 24h only happens when the deployment verified and accepted them |
+| Is there exactly one endpoint, pointing where we think? | `stripe.webhookEndpoints.list()` |
+
+The local `STRIPE_WEBHOOK_SECRET` deliberately no longer participates in any
+assertion. Copying the endpoint secret from the Stripe dashboard into
+`.env.local` would additionally allow signed traffic to be aimed at the
+deployment; nothing requires it.
